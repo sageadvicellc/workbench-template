@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 """Generate the per-harness files the neutral core does not carry.
 
-A harness is the program that runs the agent loop. Each one reads roles and
-MCP servers in its own format, from its own directory. This script renders
-those files from the one copy of each source, so nothing under a harness's
-directory is ever edited by hand:
+A harness is the program that runs the agent loop. Each one reads its MCP
+servers in its own format, from its own directory. This script renders those
+files from the one copy of the source, so nothing under a harness's directory
+is ever edited by hand:
 
-- One role file per `agents/*.md`, in the format the adapter's manifest names.
-  The role's frontmatter `name` and `description` and its body carry over.
-  A `skills:` line becomes a preamble that names each skill file to read
-  first. Extra keys, a model or a sandbox mode, come from the adapter's
-  mapping file, never from the role file.
 - One block of MCP server tables, from the workbench's MCP source file, in the
   format the manifest names, appended to a hand-edited head.
 
 Every path, every format identifier and every harness fact comes from
 `adapters/<id>/wiring.json`. This script names no harness. A manifest holds:
 
-    {"links":  {"<path>": "<target>", ...},
-     "roles":  {"format": "<id>", "dir": "<path>", "mapping": "<file>"},
-     "mcp":    {"format": "<id>", "source": "<file>", "path": "<path>",
-                "head": "<file>"}}
+    {"links": {"<path>": "<target>", ...},
+     "mcp":   {"format": "<id>", "source": "<file>", "path": "<path>",
+               "head": "<file>"}}
 
-`links` is read by check-harness.py and ignored here. `roles` and `mcp` are
-each optional. `mapping` and `head` are relative to the adapter directory;
-every other path is relative to the workbench root.
+`links` is read by check-harness.py and ignored here. `mcp` is optional.
+`head` is relative to the adapter directory; every other path is relative to
+the workbench root.
 
 Usage:
 
@@ -33,18 +27,14 @@ Usage:
     python3 scripts/sync-harness.py --root PATH  another tree
 
 Exit 0 when nothing is stale, or after writing. Exit 1 from `--check` when a
-generated file is missing, differs from its source, or has no source left
-(an orphan). Exit 2 on an input the script cannot use: an unreadable
-manifest, a role with no frontmatter, a mapping naming a role that does not
-exist, a format nobody registered, or an MCP server it cannot express in the
-target format. Exit 2 names the file and the cause on stderr and writes
-nothing.
+generated file is missing or differs from its source. Exit 2 on an input the
+script cannot use: an unreadable manifest, a format nobody registered, or an
+MCP server it cannot express in the target format. Exit 2 names the file and
+the cause on stderr and writes nothing.
 
-Standard library only. It loads `check-roles.py` for its frontmatter parser,
-so the two scripts read a role file the same way.
+Standard library only.
 """
 
-import importlib.util
 import json
 import os
 import re
@@ -63,16 +53,6 @@ class SyncError(Exception):
     """An input the script cannot use. Exit 2, nothing written."""
 
 
-def _load_check_roles():
-    spec = importlib.util.spec_from_file_location("check_roles", HERE / "check-roles.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-check_roles = _load_check_roles()
-
-
 # --- TOML rendering ----------------------------------------------------------
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -89,31 +69,7 @@ def toml_basic(text):
     return '"' + _escape_control(out) + '"'
 
 
-def toml_multiline(text):
-    """Multi-line basic string. The newline after the opening delimiter is
-    trimmed by TOML, so the body's first line is preserved. A run of three
-    quotes inside the body would close the string, so every such run gets its
-    third quote escaped. Carriage returns are escaped rather than kept, since
-    a bare CR is not legal inside the string."""
-    out = text.replace("\\", "\\\\")
-    out = out.replace('"""', '""\\"')
-    out = out.replace("\r", "\\r")
-    out = _escape_control(out)
-    # One or two unescaped quotes before the closing delimiter are legal
-    # TOML; three cannot occur, because every run of three was escaped above.
-    return '"""\n' + out + '"""'
-
-
-def _toml_value(key, value):
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, str):
-        return toml_basic(value)
-    raise SyncError(f"mapping key {key!r}: only strings and booleans are rendered, not {type(value).__name__}")
-
-
 BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
-AGENT_KEYS = ("name", "description", "developer_instructions")
 
 
 def _bare_key(key, where):
@@ -122,27 +78,6 @@ def _bare_key(key, where):
     if not isinstance(key, str) or not BARE_KEY.fullmatch(key):
         raise SyncError(f"{where}: key {key!r} is not a bare TOML key (letters, digits, _ and -)")
     return key
-
-
-def render_toml_agent(source_rel, name, description, body, skills, extra):
-    """One agent file: a header comment, name, description, the extra keys in
-    the order the mapping gave them, and the body as developer_instructions."""
-    lines = [
-        f"# Generated by scripts/sync-harness.py from {source_rel}. Do not edit here.",
-        f"name = {toml_basic(name)}",
-        f"description = {toml_basic(description)}",
-    ]
-    for key, value in extra.items():
-        _bare_key(key, f"mapping for {name}")
-        if key in AGENT_KEYS:
-            raise SyncError(f"mapping for {name}: key {key!r} is set from the role file, not the mapping")
-        lines.append(f"{key} = {_toml_value(key, value)}")
-    instructions = body
-    if skills:
-        files = ", ".join(f"`skills/{s}/SKILL.md`" for s in skills)
-        instructions = f"Before you start, read each of these files in full: {files}.\n\n" + body
-    lines.append(f"developer_instructions = {toml_multiline(instructions)}")
-    return "\n".join(lines) + "\n"
 
 
 def render_toml_mcp_servers(servers, source_rel):
@@ -248,7 +183,7 @@ def _contained(root, rel_path, where):
         raise SyncError(f"{where}: {rel_path!r} is absolute; give a path relative to the workbench root")
     if ".." in Path(rel_path).parts:
         # No manifest path has a reason to climb. One that does is either a
-        # mistake or a way to point the orphan sweep at files it never wrote.
+        # mistake or a way to write outside the tree the script was given.
         raise SyncError(f"{where}: {rel_path!r} contains '..'; give a plain path under the workbench root")
     normal = Path(os.path.normpath(rel_path)).as_posix()
     if normal == ".":
@@ -271,70 +206,7 @@ def load_manifests(root):
     return found
 
 
-def role_sources(root):
-    """name -> (fields, body, skills) for every agents/*.md except README.md."""
-    agents = root / "agents"
-    if not agents.is_dir():
-        raise SyncError("agents/: directory not found")
-    roles = {}
-    for path in sorted(agents.glob("*.md")):
-        if path.name == "README.md":
-            continue
-        rel = path.relative_to(root).as_posix()
-        failures = []
-        parsed = check_roles.parse(path, rel, failures)
-        if parsed is None:
-            raise SyncError(failures[0])
-        fields, lists, continued = parsed
-        skills = check_roles.named_skills(fields, lists, continued, rel, failures)
-        if failures:
-            raise SyncError(failures[0])
-        name = fields.get("name", "").strip()
-        if not check_roles.NAME_RE.match(name) or name != path.stem:
-            raise SyncError(
-                f"{rel}: name {name!r} must be lowercase letters, digits and single "
-                f"hyphens, and must equal the filename {path.stem!r}")
-        text = _read_text(path, rel)
-        body = text[check_roles.FRONT_RE.match(text).end():]
-        body = body.lstrip("\n").rstrip() + "\n"
-        roles[name] = (rel, fields, body, skills)
-    return roles
-
-
-ROLE_FORMATS = {"toml-agent": render_toml_agent}
 MCP_FORMATS = {"toml-mcp-servers": render_toml_mcp_servers}
-
-
-def _role_outputs(root, adapter, block, outputs):
-    for key in ("format", "dir", "mapping"):
-        if key not in block:
-            raise SyncError(f"adapters/{adapter}/{MANIFEST}: roles block has no {key!r}")
-    render = ROLE_FORMATS.get(block["format"])
-    if render is None:
-        raise SyncError(f"adapters/{adapter}/{MANIFEST}: role format {block['format']!r} is not registered")
-    where = f"adapters/{adapter}/{MANIFEST}: roles.dir"
-    directory = _contained(root, block["dir"], where)
-    mapping_rel = f"{ADAPTERS_DIR}/{adapter}/{block['mapping']}"
-    mapping = _read_json(root / mapping_rel, mapping_rel)
-    if not isinstance(mapping, dict):
-        raise SyncError(f"{mapping_rel}: the top level is not an object")
-    defaults = mapping.get("defaults", {})
-    per_role = mapping.get("roles", {})
-    if not isinstance(defaults, dict):
-        raise SyncError(f"{mapping_rel}: defaults is not an object")
-    if not isinstance(per_role, dict):
-        raise SyncError(f"{mapping_rel}: roles is not an object")
-    roles = role_sources(root)
-    for name, entry in per_role.items():
-        if name not in roles:
-            raise SyncError(f"{mapping_rel}: role {name!r} has no agents/{name}.md")
-        if not isinstance(entry, dict):
-            raise SyncError(f"{mapping_rel}: role {name!r} is not an object")
-    for name, (rel, fields, body, skills) in roles.items():
-        extra = dict(defaults)
-        extra.update(per_role.get(name, {}))
-        out_rel = f"{directory}/{name}.toml"
-        outputs[out_rel] = render(rel, name, fields.get("description", ""), body, skills, extra)
 
 
 def _mcp_outputs(root, adapter, block, outputs):
@@ -363,32 +235,13 @@ def expected_outputs(root):
     root = Path(root)
     outputs = {}
     for adapter, manifest in load_manifests(root):
-        if "roles" in manifest:
-            _role_outputs(root, adapter, manifest["roles"], outputs)
         if "mcp" in manifest:
             _mcp_outputs(root, adapter, manifest["mcp"], outputs)
     return outputs
 
 
-def _orphans(root, outputs):
-    """Generated role files whose source role is gone."""
-    found = []
-    for adapter, manifest in load_manifests(root):
-        block = manifest.get("roles")
-        if not isinstance(block, dict) or "dir" not in block:
-            continue
-        directory = root / _contained(root, block["dir"], f"adapters/{adapter}/{MANIFEST}: roles.dir")
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.glob("*.toml")):
-            rel = path.relative_to(root).as_posix()
-            if rel not in outputs:
-                found.append(rel)
-    return found
-
-
 def stale(root):
-    """One line per file that is missing, differs, or has no source."""
+    """One line per file that is missing or differs from its source."""
     root = Path(root)
     outputs = expected_outputs(root)
     lines = []
@@ -398,12 +251,11 @@ def stale(root):
             lines.append(f"missing: {rel}")
         elif _read_text(path, rel) != text:
             lines.append(f"stale: {rel}")
-    lines.extend(f"orphan: {rel}" for rel in _orphans(root, outputs))
     return lines
 
 
 def write(root):
-    """Write every stale or missing file, delete every orphan."""
+    """Write every stale or missing file."""
     root = Path(root)
     outputs = expected_outputs(root)
     lines = []
@@ -415,9 +267,6 @@ def write(root):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         lines.append(f"wrote: {rel}")
-    for rel in _orphans(root, outputs):
-        (root / rel).unlink()
-        lines.append(f"deleted: {rel}")
     return lines
 
 

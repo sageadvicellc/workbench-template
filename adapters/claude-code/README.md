@@ -24,18 +24,26 @@ symlinks it declares are tracked in git and need no installer.
    2026-09-11); the check then reports that file as not a symlink, and the
    role and skill links still need one.
 
-2. Optional: install the plugin that carries code and design work. The
-   workbench routes that work to `superpowers` in `AGENTS.md` under "How work
-   runs". From a shell, at user scope:
+2. Install the wiki pack, then the packs chosen in `prompts/setup.md` stage
+   0. The wiki pack is declared by `.claude-plugin/marketplace.json` at the
+   workbench root, so the repo is its own marketplace:
 
    ```bash
-   claude plugin install superpowers@claude-plugins-official
+   claude plugin marketplace add <owner>/workbench-template
+   claude plugin install wiki@workbench
    ```
 
-   `claude plugin install` "installs to user scope unless you pass `--scope`"
-   and loads "the next time you start Claude Code"
-   (`https://code.claude.com/docs/en/discover-plugins`, retrieved 2026-09-12).
-   Skip this step if the owner does not build software here.
+   Replace `<owner>` with the GitHub owner of the clone's remote, or pass the
+   local path (`claude plugin marketplace add .` from the root) to install
+   from the checkout. Every other pack comes from its own marketplace, with
+   the command its README gives; `README.md` at the root lists one working
+   set under "Packs and plugins". `claude plugin install` "installs to user
+   scope unless you pass `--scope`" and loads "the next time you start Claude
+   Code" (`https://code.claude.com/docs/en/discover-plugins`, retrieved
+   2026-09-12). A plugin that carries hooks or many skills costs tokens in
+   every session it is enabled in; `claude plugin details <name>` reports the
+   always-on cost, and `enabledPlugins` in a repository's
+   `.claude/settings.json` enables it there and nowhere else.
 
 3. Start a session at the workbench root:
 
@@ -46,30 +54,33 @@ symlinks it declares are tracked in git and need no installer.
    A session must start at the root, or the entrypoint does not load. See
    "The instruction filename and its load order" below.
 
-4. Confirm the three surfaces loaded. `/context` lists `CLAUDE.md` under
-   memory files and the six roles under custom agents ("check that agents
-   appear in `/context` under Custom Agents",
+4. Confirm the surfaces loaded. `/context` lists `CLAUDE.md` under memory
+   files, and any roles a chosen pack ships under custom agents ("check that
+   agents appear in `/context` under Custom Agents",
    `https://code.claude.com/docs/en/plugins`, retrieved 2026-09-12). `/plugin`
-   shows the plugin from step 2 if you installed it. The thirteen skills load
-   on demand when a request matches a description; ask for a wiki lint to see
-   one fire.
+   lists every pack from step 2. The five wiki skills load on demand when a
+   request matches a description; ask for a wiki lint to see one fire.
 
 5. Paste `prompts/setup.md` into the session. It walks the specialisation
    pass and ends by running the checks above again.
 
 ## What this adapter declares
 
-`wiring.json` beside this file names three symlinks. `scripts/check-harness.py`
-reads it and proves each one exists, points where it says, and reaches every
-skill and role.
+`wiring.json` beside this file names one symlink. `scripts/check-harness.py`
+reads it and proves it exists and points where it says.
 
 | Path | What it is | Source | Retrieved |
 |---|---|---|---|
 | `CLAUDE.md` | Symlink to `AGENTS.md`. The documentation states "Claude Code reads `CLAUDE.md`, not `AGENTS.md`" and gives `ln -s AGENTS.md CLAUDE.md` as the bridge when no harness-specific content is wanted | `https://code.claude.com/docs/en/memory` | 2026-09-11 |
-| `.claude/agents` | Symlink to `agents/`. Project subagents are discovered in `.claude/agents/`, scanned recursively, walking up from the working directory | `https://code.claude.com/docs/en/sub-agents` | 2026-09-11 |
-| `.claude/skills` | Symlink to `skills/`. Project skills are discovered at `.claude/skills/<skill-name>/SKILL.md` | `https://code.claude.com/docs/en/skills` | 2026-09-11 |
 
-Beside the two symlinks, `.claude/.gitignore` keeps the two files this
+Two more paths are this harness's and not declared in the manifest, because
+they are plugin manifests and not wiring: `.claude-plugin/marketplace.json`
+at the root declares the `wiki` pack, and `wiki/.claude-plugin/plugin.json`
+is that pack's own manifest. `claude plugin validate .` checks both. Skills
+and roles reach a session through installed packs, never through a symlink
+into this tree, so `.claude/agents` and `.claude/skills` no longer exist.
+
+Beside the symlink, `.claude/.gitignore` keeps the two files this
 harness writes during a session out of every commit: `settings.local.json`,
 documented as "You, in this one project only", and `scheduled_tasks.lock`,
 which the documentation does not mention
@@ -79,11 +90,8 @@ isolated session. A nested ignore file can ignore paths inside its own
 directory, so the root `.gitignore` in the neutral core stays free of any
 harness name.
 
-The neutral role files in `agents/` are valid subagents as they stand: `name`,
-`description` and `skills` are all documented frontmatter fields. This adapter
-therefore generates nothing and carries no mapping file. A `tools:` or
-`model:` value, if the owner wants one, is a decision for this workbench and
-goes in the role file, where `scripts/check-roles.py` checks it.
+This adapter generates nothing and carries no mapping file. A role's model
+or tools are set in the pack that ships the role, on that pack's terms.
 
 MCP servers come from `.mcp.json` at the workbench root, which this harness
 reads directly. It ships empty. Add a server there and every harness whose
@@ -164,8 +172,8 @@ all.
 
 ## Wiring check
 
-`python3 scripts/check-harness.py` ran clean on this adapter's three symlinks
-on 2026-09-12, on the tree this file was committed in. That proves the wiring,
+`python3 scripts/check-harness.py` ran clean on this adapter's one symlink
+on 2026-09-17, on the tree this file was committed in. That proves the wiring,
 not the behaviour below.
 
 ## Acceptance surfaces
@@ -194,15 +202,19 @@ inferred.
 
 A pass another harness's configuration produced is not a pass. This harness's
 user-scope files, `~/.claude/CLAUDE.md` and `~/.claude/skills/`, load whatever
-the project holds, so a run records the absolute path each surface resolved
-from and fails any path outside the workbench.
+the user holds, and an installed pack resolves from the plugin cache, so a run
+records the absolute path each surface resolved from and names the pack a
+skill or role came from.
 
 ## Removing the adapter
 
 ```bash
-git rm CLAUDE.md .claude/agents .claude/skills .claude/.gitignore
-git rm -r adapters/claude-code
+git rm CLAUDE.md .claude/.gitignore
+git rm -r adapters/claude-code .claude-plugin wiki/.claude-plugin
 ```
+
+The last two are the pack manifests this harness reads; the pack's skills
+stay, because the routing rows in `AGENTS.md` reach them by path.
 
 `scripts/check-harness.py` then has no manifest for this harness and checks
 nothing for it.

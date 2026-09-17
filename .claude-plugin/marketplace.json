@@ -1,0 +1,18 @@
+{
+  "name": "workbench",
+  "owner": {
+    "name": "Sage Advice LLC"
+  },
+  "description": "The workbench template's own pack: the five operations that keep an LLM wiki true.",
+  "plugins": [
+    {
+      "name": "wiki",
+      "source": "./wiki",
+      "version": "1.0.0",
+      "description": "The five operations that keep a knowledge base true: ingest, query, lint, verify, open items.",
+      "author": {
+        "name": "Sage Advice LLC"
+      }
+    }
+  ]
+}

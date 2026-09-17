@@ -1,10 +1,10 @@
 """Tests for scripts/check-harness.py.
 
 The script proves the wiring between the neutral core and every adapter: the
-symlinks each manifest declares exist and point where they say, every skill
-and role is reachable through them, every generated file is current, no file
-in the neutral core names a harness, and the entrypoint fits the smallest
-documented size cap. It proves wiring, not behaviour.
+symlinks each manifest declares exist and point where they say, every skill is
+reachable through them, every generated file is current, no file in the neutral
+core names a harness, and the entrypoint fits the smallest documented size cap.
+It proves wiring, not behaviour.
 
 Standard library only. Run with:
 
@@ -41,31 +41,30 @@ def _can_symlink():
 
 HAS_SYMLINKS = _can_symlink()
 
-ROLE = "---\nname: alpha\ndescription: d\n---\n\nBody.\n"
 SKILL = "---\nname: one\ndescription: d\n---\n"
+MCP_BLOCK = {"format": "toml-mcp-servers", "source": ".mcp.json",
+             "path": ".acme/config.toml", "head": "config.toml"}
 
 
 class Fixture:
-    """A tree with one role, one skill, one adapter, and correct wiring."""
+    """A tree with one pack skill, one adapter, and correct wiring."""
 
     def __init__(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.write("AGENTS.md", "# entrypoint\n")
         self.write("README.md", "# readme\n")
-        self.write("agents/README.md", "# roles\n")
-        self.write("agents/alpha.md", ROLE)
-        self.write("skills/one/SKILL.md", SKILL)
+        self.write("wiki/skills/one/SKILL.md", SKILL)
+        self.write(".mcp.json", json.dumps({"mcpServers": {}}))
         self.write("adapters/harness-names.txt", "# names\nAcme Harness\n\\.acme\\b\n")
         self.write("adapters/x/wiring.json", json.dumps({
-            "links": {"ENTRY.md": "AGENTS.md", ".acme/agents": "../agents", ".acme/skills": "../skills"},
-            "roles": {"format": "toml-agent", "dir": ".acme/roles", "mapping": "roles.json"},
+            "links": {"ENTRY.md": "AGENTS.md", ".acme/skills": "../wiki/skills"},
+            "mcp": MCP_BLOCK,
         }))
-        self.write("adapters/x/roles.json", json.dumps({"defaults": {}, "roles": {}}))
+        self.write("adapters/x/config.toml", "# head\n")
         (self.root / ".acme").mkdir()
         os.symlink("AGENTS.md", self.root / "ENTRY.md")
-        os.symlink("../agents", self.root / ".acme/agents")
-        os.symlink("../skills", self.root / ".acme/skills")
+        os.symlink("../wiki/skills", self.root / ".acme/skills")
         check.sync.write(self.root)
 
     def write(self, rel, text):
@@ -131,38 +130,51 @@ class CheckHarnessTest(unittest.TestCase):
         (self.root / ".acme/skills").mkdir()
         failures = check.run(self.root)
         self.assertEqual(len(failures), 1, failures)
-        self.assertIn(".acme/skills: is a directory, not a symlink to ../skills", failures[0])
+        self.assertIn(".acme/skills: is a directory, not a symlink to ../wiki/skills", failures[0])
 
     def test_a_link_to_the_wrong_directory_is_one_failure(self):
-        (self.root / ".acme/agents").unlink()
-        os.symlink("../skills", self.root / ".acme/agents")
-        self.assertEqual(check.run(self.root), [".acme/agents: points at ../skills, not ../agents"])
+        (self.root / ".acme/skills").unlink()
+        os.symlink("../central-context", self.root / ".acme/skills")
+        self.assertEqual(check.run(self.root),
+                         [".acme/skills: points at ../central-context, not ../wiki/skills"])
 
     def test_reachability_names_each_file_a_declared_link_does_not_serve(self):
         """The unit, called directly: run() only hands it links that passed,
         so a partial copy behind a declared path is what it exists to name."""
         (self.root / ".acme/skills").unlink()
         (self.root / ".acme/skills").mkdir()
-        (self.root / ".acme/agents").unlink()
-        (self.root / ".acme/agents").mkdir()
         failures = []
-        check.check_reachable(self.root, {".acme/skills": "../skills", ".acme/agents": "../agents"}, failures)
-        self.assertEqual(failures, [
-            "skills/one/SKILL.md: not reachable through .acme/skills",
-            "agents/alpha.md: not reachable through .acme/agents",
-        ])
+        check.check_reachable(self.root, {".acme/skills": "../wiki/skills"}, failures)
+        self.assertEqual(failures, ["wiki/skills/one/SKILL.md: not reachable through .acme/skills"])
+
+    def test_reachability_works_for_any_directory_holding_skills(self):
+        """The skills root is not a fixed path: any destination holding
+        <dir>/SKILL.md is proved the same way, so an adapter that links a
+        pack's skills directory is covered without naming it here."""
+        self.fx.write("elsewhere/two/SKILL.md", SKILL)
+        (self.root / ".acme/other").mkdir()
+        failures = []
+        check.check_reachable(self.root, {".acme/other": "../elsewhere"}, failures)
+        self.assertEqual(failures, ["elsewhere/two/SKILL.md: not reachable through .acme/other"])
+
+    def test_a_link_to_a_file_is_not_searched_for_skills(self):
+        """ENTRY.md points at the entrypoint, not a directory. It passes the
+        link check and reachability says nothing about it."""
+        failures = []
+        check.check_reachable(self.root, {"ENTRY.md": "AGENTS.md"}, failures)
+        self.assertEqual(failures, [])
 
     # -- generated files --------------------------------------------------------
 
     def test_a_stale_generated_file_is_a_failure(self):
-        path = self.root / ".acme/roles/alpha.toml"
+        path = self.root / ".acme/config.toml"
         path.write_text(path.read_text(encoding="utf-8") + "# edit\n", encoding="utf-8")
-        self.assertIn("stale: .acme/roles/alpha.toml", check.run(self.root))
+        self.assertIn("stale: .acme/config.toml", check.run(self.root))
 
     def test_a_generator_input_error_is_a_failure_not_a_crash(self):
-        self.fx.write("adapters/x/roles.json", "{bad")
+        self.fx.write(".mcp.json", "{bad")
         failures = check.run(self.root)
-        self.assertTrue(any("adapters/x/roles.json" in f for f in failures), failures)
+        self.assertTrue(any(".mcp.json" in f for f in failures), failures)
 
     # -- the neutral core -------------------------------------------------------
 
@@ -171,9 +183,22 @@ class CheckHarnessTest(unittest.TestCase):
         self.assertIn("AGENTS.md:3: names a harness: Acme Harness", check.run(self.root))
 
     def test_a_harness_directory_in_the_core_is_named(self):
-        self.fx.write("skills/one/SKILL.md", SKILL + "\nRead .acme/config first.\n")
+        self.fx.write("wiki/skills/one/SKILL.md", SKILL + "\nRead .acme/config first.\n")
         failures = check.run(self.root)
-        self.assertTrue(any("skills/one/SKILL.md:6" in f for f in failures), failures)
+        self.assertTrue(any("wiki/skills/one/SKILL.md:6" in f for f in failures), failures)
+
+    def test_the_pack_is_one_of_the_permitted_core_paths(self):
+        """wiki/ is scanned, so a harness name in a pack skill is caught."""
+        self.assertIn("wiki", check.CORE_PATHS)
+        scanned = {p.relative_to(self.root).as_posix() for p in check.core_files(self.root)}
+        self.assertIn("wiki/skills/one/SKILL.md", scanned)
+
+    def test_the_packs_own_dot_directories_are_not_scanned(self):
+        """A pack manifest sits in a dot directory inside the pack, one per
+        harness. Such a directory names a harness by design, and none of it is
+        core text."""
+        self.fx.write("wiki/.acme-plugin/plugin.json", '{"name": "wiki"}\n')
+        self.assertEqual(check.run(self.root), [])
 
     def test_an_adapter_path_token_is_not_a_harness_name(self):
         self.fx.write("README.md", "# readme\n\nSee adapters/acme/README.md and adapters/acme/.\n")
@@ -202,14 +227,7 @@ class CheckHarnessTest(unittest.TestCase):
     def test_a_broken_link_is_one_failure_not_one_per_skill(self):
         (self.root / ".acme/skills").unlink()
         failures = check.run(self.root)
-        self.assertEqual(failures, [".acme/skills: missing. Expected a symlink to ../skills"])
-
-    def test_agents_readme_is_not_a_role_for_reachability(self):
-        (self.root / ".acme/agents").unlink()
-        (self.root / ".acme/agents").mkdir()
-        failures = []
-        check.check_reachable(self.root, {".acme/agents": "../agents"}, failures)
-        self.assertEqual(failures, ["agents/alpha.md: not reachable through .acme/agents"])
+        self.assertEqual(failures, [".acme/skills: missing. Expected a symlink to ../wiki/skills"])
 
     def test_raw_sources_and_research_docs_are_not_scanned(self):
         self.fx.write("central-context/raw/sources/2026-09-12-mail.txt", "Acme Harness said hi.\n")
@@ -261,7 +279,7 @@ class CheckHarnessTest(unittest.TestCase):
 
     def test_exit_code_is_the_failure_count(self):
         (self.root / "ENTRY.md").unlink()
-        self.fx.write("AGENTS.md", "Acme Harness\n")
+        self.fx.write("AGENTS.md", "Acme Harness\n")  # one link failure, one name
         result = self._cli(str(self.root))
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn("2 failure(s)", result.stdout)

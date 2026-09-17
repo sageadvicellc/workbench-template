@@ -1,6 +1,6 @@
 ---
 type: log
-updated: 2026-09-12
+updated: 2026-09-17
 ---
 # DECISIONS.md
 
@@ -74,3 +74,25 @@ harnesses this template has an adapter for, and a template that ships a
 pipeline its source abandoned is a template that misleads.
 **Affects:** `agents/`, `agents/README.md`, `AGENTS.md`, `prompts/setup.md`
 stage 2, the routing table.
+
+### 2026-09-17 · The template ships structure and one pack, and forces no other
+**Decided:** The template ships the entrypoint, the knowledge base, the
+checks, and one pack, `wiki/`, holding the five wiki skills and declared by a
+marketplace manifest at the root. It ships no roles, no research skills, no
+writing standard, and no code pipeline. `prompts/setup.md` asks, in stage 0,
+which packs and plugins carry code, design, writing, and research, and
+`README.md` lists one practice's working set as an example. This supersedes
+the entry of 2026-09-12 that named a code plugin under "How work runs".
+**Instead of:** Keeping the six research roles and the thirteen skills
+vendored and drifting from their working copies; naming one code plugin as
+the default; making the template depend on a private marketplace.
+**Because:** The template is public and is meant for people at more than one
+employer. Nothing it ships may be a package somebody has to accept, and the
+wiki skills are the one thing the page schema cannot run without. Vendored
+copies had drifted from their working copies by up to 93 lines per file in
+five days, and every role change needed a generator, a mapping, and a check
+that exist only to carry roles.
+**Affects:** `wiki/`, the root marketplace manifest, `AGENTS.md`,
+`README.md`, `prompts/setup.md`, `adapters/`, `scripts/check-skills.py`,
+`scripts/sync-harness.py`, `scripts/check-harness.py`, the deleted `agents/`,
+`skills/`, the generated role directory, and the three discovery symlinks.

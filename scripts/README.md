@@ -1,6 +1,6 @@
 ---
 type: index
-updated: 2026-09-12
+updated: 2026-09-17
 ---
 
 # scripts
@@ -17,62 +17,34 @@ rather than be read, it lives here and `central-context/AGENTS.md` names it by
 path.
 
 A script that belongs to one skill stays with that skill, under
-`skills/<name>/`. A script that belongs to one project stays in that project's
-repo. Everything else is here.
+`wiki/skills/<name>/`. A script that belongs to one project stays in that
+project's repo. Everything else is here.
 
 | Script | Does | Run from |
 |---|---|---|
-| `check-roles.py` | Checks agent and skill frontmatter | The workbench root: `python3 scripts/check-roles.py` |
-| `model-registry.txt` | Data, not a script. The values `check-roles.py` accepts in a role's `model:` field. It ships with no values in it | Read by `check-roles.py` |
+| `check-skills.py` | Checks skill frontmatter under `wiki/skills/` | The workbench root: `python3 scripts/check-skills.py` |
 | `check-open-items.py` | Checks the `open_items` frontmatter of the context files | The workbench root: `python3 scripts/check-open-items.py` |
 | `open-items-files.txt` | Data, not a script. The context files `check-open-items.py` reads by default | Read by `check-open-items.py` |
-| `sync-harness.py` | Generates, per adapter manifest, the role files and the MCP tables a harness reads in its own format, from `agents/` and `.mcp.json` | The workbench root: `python3 scripts/sync-harness.py`, or `--check` to report and write nothing |
-| `check-harness.py` | Proves the wiring: every declared symlink, every skill and role reachable through it, every generated file current, no harness named in the neutral core, and the entrypoint under its size cap | The workbench root: `python3 scripts/check-harness.py` |
+| `sync-harness.py` | Generates, per adapter manifest, the MCP tables a harness reads in its own format, from `.mcp.json` | The workbench root: `python3 scripts/sync-harness.py`, or `--check` to report and write nothing |
+| `check-harness.py` | Proves the wiring: every declared symlink, every skill reachable through it, every generated file current, no harness named in the neutral core, and the entrypoint under its size cap | The workbench root: `python3 scripts/check-harness.py` |
 
-## check-roles.py
+## check-skills.py
 
-A harness skips a malformed role file in silence, so this is the only thing
+A harness skips a malformed skill file in silence, so this is the only thing
 that reports one.
 
-`skills:` in a role file is written inline and comma separated. That is the
-only form the checker accepts. A flow list or an indented block list is
-reported by name and not parsed. One declared form is a smaller promise than
-three parsers, and it is the promise a reader can check.
+It checks every directory directly under `wiki/skills/`: that a `SKILL.md`
+sits directly under `wiki/skills/<dir>/` and not deeper, that no skill
+directory is empty, that `name` matches the directory and is lowercase-hyphen
+and at most 64 characters, and that `description` is not empty. It also
+reports a missing `wiki/skills/` at the checked root, so a run against the
+wrong directory never reports a clean tree.
 
-On roles it checks that frontmatter exists with `---` as the first line, that
-`name` matches the filename and is lowercase-hyphen, that `description` is not
-empty, that `model` is registered, and that every skill named in `skills:`
-exists. On skills it checks that a `SKILL.md` sits directly under
-`skills/<dir>/` and not deeper, that no skill directory is empty, that `name`
-matches the directory and is lowercase-hyphen, and that `description` is not
-empty.
-
-Two things it reports separately:
-
-- **A failure** is a defect. Fix the file.
-- **A question** is a `model:` value that is not in `model-registry.txt`. The
-  script never checks the shape of such a value, because no two harnesses spell
-  a model the same way and a pattern would refuse a spelling somebody's harness
-  accepts. So the script cannot tell a typo from a model nobody has registered,
-  and it asks instead of ruling. Fix the typo, or add a line to the registry.
-
-Both count toward the exit code, which is their total, capped at 125. That
-makes it usable as a pre-commit hook with no wrapper. Nothing calls it
-automatically yet. Wiring it into one is a decision for this workbench; open
-an item in `AGENTS.md` if you want it tracked.
-
-### The model check does not fire on the shipped tree
-
-`model-registry.txt` ships with no values in it, and no role file in `agents/`
-names a model. A model identifier is a fact about one harness and one vendor,
-so the neutral core holds none. A run that never reports a question about a
-model is waiting for a cloner who pins one. It is not broken.
-
-Where an adapter maps each role to a model, that mapping is the better home for
-an identifier, and the registry stays empty. When you do add a value, add one
-line with a comment saying what the value is and where you confirmed it. A bare
-identifier with no provenance is how a registry rots. The top of
-`model-registry.txt` states the form and the two shapes worth registering.
+Every finding is a failure, and every failure is a defect. Fix the file. The
+exit code is the failure count, capped at 125, which makes the script usable
+as a pre-commit hook with no wrapper. Nothing calls it automatically yet.
+Wiring it into one is a decision for this workbench; open an item in
+`AGENTS.md` if you want it tracked.
 
 ### Exempting somebody else's skill
 
@@ -90,8 +62,8 @@ skipped by forgetting to register it.
 The same specification sets the other name rules the script enforces: 1 to 64
 characters, lowercase alphanumeric and hyphens, no leading or trailing hyphen,
 no consecutive hyphens. It also publishes a validator, `skills-ref validate`,
-which checks a single skill and not the roles, the nesting, or the tree shape
-this script covers.
+which checks a single skill and not the nesting or the tree shape this script
+covers.
 
 ## check-open-items.py
 
@@ -145,8 +117,8 @@ still counts as a file the run found.
 Four options:
 
 - `--findings-only` prints the findings and the counts, and holds back the item
-  listing. Mechanical check 1 of `skills/wiki-verify/SKILL.md` calls the script
-  this way.
+  listing. Mechanical check 1 of `wiki/skills/wiki-verify/SKILL.md` calls the
+  script this way.
 - `--stale-days N` sets the due window, in days since `checked`. Default 14.
 - `--today YYYY-MM-DD` sets the run date, for a test.
 - `--root PATH` sets the path findings print relative to.
@@ -155,19 +127,17 @@ Four options:
 
 Every path, format identifier and harness fact it uses comes from
 `adapters/<id>/wiring.json`, so the script names no harness. A manifest's
-`roles` block names a registered format, the directory to write into, and a
-mapping file of extra per-role values; its `mcp` block names a format, the
-source `.mcp.json`, the path to write, and a hand-edited head to put first.
-The generated files are committed. Run the script after any edit to `agents/`,
-to `.mcp.json`, or to a mapping or head file, and commit what it wrote.
+`mcp` block names a format, the source `.mcp.json`, the path to write, and a
+hand-edited head to put first. That is the only block it renders. The
+generated files are committed. Run the script after any edit to `.mcp.json`,
+or to a head file, and commit what it wrote.
 
-`--check` writes nothing and exits 1 with one line per file that is missing,
-differs from its source, or has no source left. Exit 2 is an input the script
-cannot use, named on stderr: an unreadable manifest, a role with no
-frontmatter, a mapping naming a role that does not exist, a format nobody
-registered, or an MCP server the target format cannot express. It refuses
-rather than approximates, because a server rendered differently from its
-source is a server that works on one harness and silently not the other.
+`--check` writes nothing and exits 1 with one line per file that is missing or
+differs from its source. Exit 2 is an input the script cannot use, named on
+stderr: an unreadable manifest, a format nobody registered, or an MCP server
+the target format cannot express. It refuses rather than approximates, because
+a server rendered differently from its source is a server that works on one
+harness and silently not the other.
 
 ## check-harness.py
 
@@ -178,14 +148,20 @@ manifest exists.
 
 The harness-name scan reads `adapters/harness-names.txt`, strips every
 `adapters/<id>/...` path token from a line, and reports every remaining match
-in the ten permitted paths of the neutral core. Zero on a clean tree is the
-right answer: every sentence in the core that reaches an adapter carries a
-path and no harness name. A plain file where a symlink should be gets the
-Windows fix in its message.
+in the nine permitted paths of the neutral core, `wiki/` among them, so the
+pack's skills are scanned too. Zero on a clean tree is the right answer: every
+sentence in the core that reaches an adapter carries a path and no harness
+name. A plain file where a symlink should be gets the Windows fix in its
+message.
 
-It proves wiring, not behaviour. Whether a harness loads the entrypoint,
-dispatches a role, or completes a wiki operation is the acceptance test below,
-which does not exist yet.
+Reachability is proved per link: for any link whose destination holds
+`<dir>/SKILL.md` files, each of those files must be readable through the link.
+A link an adapter points at `wiki/skills` is proved the same way as one
+pointed anywhere else.
+
+It proves wiring, not behaviour. Whether a harness loads the entrypoint, loads
+a skill, or completes a wiki operation is the acceptance test below, which does
+not exist yet.
 
 ## Tests
 
@@ -201,15 +177,15 @@ itself.
 
 One thing about the acceptance test is settled and belongs here, because a
 reader who runs it will see failures and wonder whether the suite is broken. It
-proves a harness by checking four surfaces: the entrypoint loads without being
-asked, one role is dispatched, one skill loads on demand, and one wiki
-operation completes end to end. Two runs are expected to fail, and both exist
-to show that the test can detect a broken tree.
+proves a harness by checking three surfaces: the entrypoint loads without being
+asked, one skill loads on demand, and one wiki operation completes end to end.
+Two runs are expected to fail, and both exist to show that the test can detect
+a broken tree.
 
 1. Run against a harness identifier with no adapter installed, the test fails
    at the first surface and names the missing adapter.
-2. Run with the skill discovery path removed, the test passes surfaces 1, 2 and
-   4 and fails surface 3.
+2. Run with the skill discovery path removed, the test passes surfaces 1 and 3
+   and fails surface 2.
 
 The workbench's specification requires both to be stated as expected behaviour
 in the test's own documentation.

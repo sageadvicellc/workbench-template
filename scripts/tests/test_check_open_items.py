@@ -1945,7 +1945,7 @@ class CheckOpenItemsTest(unittest.TestCase):
         """Criterion 57: the four inline awk programs over open_items are
         gone; the one over ## Open questions in wiki-verify is out of scope
         and named separately, so it must not trip this check."""
-        for rel in ("skills/wiki-open-items/SKILL.md", "skills/wiki-verify/SKILL.md"):
+        for rel in ("wiki/skills/wiki-open-items/SKILL.md", "wiki/skills/wiki-verify/SKILL.md"):
             text = (CONTAINER_ROOT / rel).read_text(encoding="utf-8")
             for line in text.splitlines():
                 if "open_items" in line:

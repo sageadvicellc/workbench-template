@@ -30,8 +30,8 @@ A context file is any `AGENTS.md`, any `SKILL.md`, any `SPEC.md`, and any page
 under `central-context/wiki/`. Verify reads all of them.
 
 The main session runs this skill. A role that finds a claim the disk
-contradicts reports it in one `Context:` line, as `agents/README.md` says, and
-changes nothing.
+contradicts reports it in one `Context:` line, as the root `AGENTS.md` says
+under "Keep the context true", and changes nothing.
 
 ## When to run
 
@@ -76,8 +76,8 @@ then read every sentence that states one.
 
 ```bash
 r=$(git remote get-url origin 2>/dev/null || echo none); echo "remote: $r"
-grep -rnoE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' --include='*.md' AGENTS.md central-context skills agents DECISIONS.md | grep -vF "${r#https://}"
-grep -rniE 'no remote|has a remote|remote yet' --include='*.md' AGENTS.md central-context/AGENTS.md central-context/wiki skills agents
+grep -rnoE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' --include='*.md' AGENTS.md central-context wiki/skills DECISIONS.md | grep -vF "${r#https://}"
+grep -rniE 'no remote|has a remote|remote yet' --include='*.md' AGENTS.md central-context/AGENTS.md central-context/wiki wiki/skills
 ```
 
 The first `grep` prints every repo URL in prose that is not the one on disk. The
@@ -85,14 +85,21 @@ second prints every sentence that makes a claim about the remote. Read each
 one.
 
 ```bash
-dirs='scripts|skills|agents|prompts|central-context'   # add each project directory you nest here
-grep -rhoE "\`($dirs)/[A-Za-z0-9_./-]*\`" --include='*.md' AGENTS.md central-context/AGENTS.md central-context/wiki agents/README.md | tr -d '`' | sort -u | while read -r p; do [ -e "$p" ] || echo "missing: $p"; done
+dirs='scripts|wiki/skills|prompts|central-context'   # add each project directory you nest here
+grep -rhoE "\`($dirs)/[A-Za-z0-9_./-]*\`" --include='*.md' AGENTS.md central-context/AGENTS.md central-context/wiki | tr -d '`' | sort -u | while read -r p; do d="${p%%/*}"; [ -d "$d" ] || continue; [ -e "$p" ] || echo "missing: $p"; done
 grep -rhoE '`(feat|fix|chore|test)/[A-Za-z0-9_.-]+`' --include='*.md' AGENTS.md central-context/wiki | tr -d '`' | sort -u | while read -r b; do git show-ref --quiet "refs/heads/$b" || echo "no local branch: $b"; done
 ```
 
 The `dirs` list is the one line in this skill you maintain. Add a directory
 the first time a context file names a path inside it, or the check silently
 skips every claim about that project.
+
+The path check skips a path whose top-level directory is absent from disk
+altogether, which is what the `[ -d "$d" ] || continue` guard does. A project
+tree that is ignored here and not checked out in this working copy would
+otherwise report every one of its paths as missing. A branch a page cites with
+no local ref has no such guard, so read that finding by hand: no local ref can
+mean merged, deleted, or simply not fetched here.
 
 A missing path is a finding only when the sentence says the path exists. A
 sentence that says a path is gone, and it is gone, passes. A branch named on a

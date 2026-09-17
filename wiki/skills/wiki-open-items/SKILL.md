@@ -39,8 +39,9 @@ under `central-context/wiki/`.
 
 The main session opens and closes items. A role that finds an item its work
 made relevant, or a question nobody has settled, reports it in one `Context:`
-line, as `agents/README.md` says, and changes nothing. Step 2 of this skill,
-the trigger match, is the one step a role runs for itself before it starts.
+line, as the root `AGENTS.md` says under "Keep the context true", and changes
+nothing. Step 2 of this skill, the trigger match, is the one step a role runs
+for itself before it starts.
 
 ## When to run
 
