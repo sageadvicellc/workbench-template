@@ -2,19 +2,21 @@
 
 A harness is the program that runs the agent loop and reads this workbench's
 files. The neutral core is every part of the workbench that names no harness.
-Ten top-level paths are permitted in it and no others: the entrypoint
-`AGENTS.md`, the knowledge base in `central-context/`, the skills in `skills/`,
-the roles in `agents/`, plus `scripts/`, `prompts/`, `DECISIONS.md`, `SPEC.md`,
-`README.md` and `.gitignore`. That is a list of what may be there, not a list of
+Nine top-level paths are permitted in it and no others: the entrypoint
+`AGENTS.md`, the knowledge base in `central-context/`, the wiki pack in
+`wiki/`, plus `scripts/`, `prompts/`, `DECISIONS.md`, `SPEC.md`, `README.md`
+and `.gitignore`. That is a list of what may be there, not a list of
 what must be: the template ships no `SPEC.md`, and its absence is not a defect.
 An adapter is one directory here that holds the wiring for one harness and
 nothing else.
 
-The wiring itself is tracked in git, outside the ten paths: the symlinks each
+The wiring itself is tracked in git, outside the nine paths: the symlinks each
 adapter's `wiring.json` declares, the files `scripts/sync-harness.py`
-generates from the core, and `.mcp.json`, the one hand-edited source of MCP
-servers. A harness's own dot-directory is not the neutral core, so a symlink
-or a generated file there names nothing the core may not name. Every one of
+generates from the core, `.mcp.json`, the one hand-edited source of MCP
+servers, and the pack manifests a harness installs the wiki pack from, which
+sit in that harness's own dot-directory at the root and inside `wiki/`. A
+harness's own dot-directory is not the neutral core, so a symlink, a
+generated file, or a manifest there names nothing the core may not name. Every one of
 those paths is owned by an adapter, is never hand-edited except `.mcp.json`,
 and is checked by `python3 scripts/check-harness.py`. Settled by the owner on
 2026-09-12, in place of a per-harness installer: a clone works with no step
@@ -33,7 +35,7 @@ is a reading rather than a limit.
 What a neutral-core file may not do is name a harness. `scripts/check-harness.py`
 is that check: it reads the patterns in `adapters/harness-names.txt`, strips
 every `adapters/<id>/...` path token from a line, and fails on any match in
-the ten paths. On this tree on 2026-09-12 it reported `0 failure(s)`. Item 8
+the nine paths. On this tree on 2026-09-17 it reported `0 failure(s)`. Item 8
 of "Adding an adapter" below says how to extend the pattern.
 
 A criterion number below is provenance and not a reading list. This workbench
@@ -46,35 +48,35 @@ nothing in this file waits on a file you do not have.
 ## What an adapter may hold
 
 One adapter is one directory, `adapters/<harness-id>/`, where `<harness-id>` is
-lowercase letters, digits and single hyphens. It holds at most these six kinds
-of file and no seventh kind. Only `README.md` is required. A kind that is
+lowercase letters, digits and single hyphens. It holds at most these three
+kinds of file and no fourth kind. Only `README.md` is required. A kind that is
 absent is not a defect.
 
 | Kind | File |
 |---|---|
-| (a) | `wiring.json`, the manifest that declares the discovery symlinks the harness documents and, where the harness needs them, the role format and directory and the MCP format and path to generate |
-| (b) | One mapping file holding the per-role values the harness's role format takes and the neutral role file does not, such as a model or a sandbox mode |
-| (c) | The generated role files, which live at the discovery path the harness documents and not here. `scripts/sync-harness.py` writes them from `agents/` and the mapping file |
-| (d) | One configuration head in the harness's own format, hand-edited here. The generated configuration file at the harness's path is this head plus the MCP tables rendered from `.mcp.json` |
-| (e) | One model registry of the values that harness accepts |
-| (f) | A `README.md` |
+| (a) | `wiring.json`, the manifest that declares the discovery symlinks the harness documents and, where the harness needs it, the MCP format and path to generate |
+| (b) | One configuration head in the harness's own format, hand-edited here. The generated configuration file at the harness's path is this head plus the MCP tables rendered from `.mcp.json` |
+| (c) | A `README.md`, which opens with how to install the wiki pack and any chosen pack on this harness |
+
+Roles and skills are not an adapter's to carry or generate. They arrive in
+packs, and a pack that supports a harness ships that harness's manifest and
+role format itself.
 
 ## What an adapter may not hold
 
 - No rule from the always-on list in `AGENTS.md`, and no writing standard.
 - No wiki content, no copy of `AGENTS.md`, no copy of any `SKILL.md` body.
-- No role instruction prose that is not in the neutral role file in `agents/`.
+- No role instruction prose, and no skill body. Both belong to a pack.
 - No API key.
 - No permission rule. This template ships none, in the neutral core and in
   every adapter, so every approval prompt a colleague sees is their own machine
   asking them. An adapter `README.md` names its harness's permissions
   documentation by URL and retrieval date instead, and ships no example rule
   set.
-- No model identifier, except in exactly four places: the mapping file (b),
-  which is where the owner pins a role to a model and the only place a
-  generated role file gets one from, the configuration head (d), the dated run
-  record in `README.md`, and the model registry (e). The manifest carries
-  none, and the neutral core carries none anywhere.
+- No model identifier, except in exactly two places: the configuration head
+  (b) and the dated run record in `README.md`. The manifest carries none, and
+  the neutral core carries none anywhere. A role's model is pinned in the pack
+  that ships the role.
 
 An adapter `README.md` records, per surface, what was run and what happened:
 the harness name and version, the model identifier, the serving stack, the
@@ -96,10 +98,11 @@ reads every file and cannot complete an ingest has proved nothing useful.
 | 4. One real wiki operation | An ingest satisfies five mechanical conditions: the raw file exists at `central-context/raw/sources/<date>-<slug>.<ext>` and is byte-identical to the fixture, at least one new page under `central-context/wiki/domains/` carries `type`, `status`, `created`, `updated` and a `sources` entry naming that raw path, every `[[wikilink]]` in the new page resolves to exactly one file under `central-context/wiki/`, `index.md` gained a line naming the new page, and `log.md` gained exactly one line in the ingest format |
 
 A harness with no skill support still runs every wiki operation, because every
-routing row in `AGENTS.md` that names a skill also gives that skill's file
-path. A harness with no role support still completes the pipeline in the main
-session, because no role file is the only place any rule lives. A harness with
-neither degrades to the entrypoint, the knowledge base and `prompts/`.
+routing row in `AGENTS.md` that names a wiki skill also gives that skill's
+file path under `wiki/skills/`. A harness with no pack support gets nothing
+else this tree does not carry, and says so: a pack chosen at setup that the
+harness cannot install is recorded as such in the setup report. A harness
+with neither degrades to the entrypoint, the knowledge base and `prompts/`.
 
 Degrading is never silent. A surface an adapter cannot deliver is recorded in
 the matrix below with its reason. Where a vendor's documentation is silent, the
@@ -157,16 +160,15 @@ reaches a harness with no import and no adapter.
 
 Three things this matrix states about itself.
 
-1. `adapters/claude-code/` holds a manifest and a `README.md`. Its three
-   symlinks are tracked and checked. No run has happened on it, so its four
-   surfaces read `not tested`. It ships no configuration head and no mapping,
-   so it names no model identifier at all, and its model cell is a constraint
-   rather than an identifier.
-2. `adapters/codex/` holds a manifest, an empty mapping, a configuration head
-   and a `README.md`. Its one symlink and its seven generated files are
-   tracked and checked. No run has happened on it, so its four surfaces read
-   `not tested`, and its schema column reads `reference` because the adapter
-   imports nothing.
+1. `adapters/claude-code/` holds a manifest and a `README.md`. Its one
+   symlink is tracked and checked. No run has happened on it, so its four
+   surfaces read `not tested`. It ships no configuration head, so it names
+   no model identifier at all, and its model cell is a constraint rather
+   than an identifier.
+2. `adapters/codex/` holds a manifest, a configuration head and a
+   `README.md`. Its one generated file is tracked and checked. No run has
+   happened on it, so its four surfaces read `not tested`, and its schema
+   column reads `reference` because the adapter imports nothing.
 3. The four rows below Codex are harnesses this pass researched and did not
    adapt. Their rows stay because dated, retrieved evidence about a harness
    nobody has an adapter for is still what a colleague reads when choosing one.
@@ -326,11 +328,11 @@ hardware allows"
 location, so cite the long one.
 
 One fact holds across all five harnesses that read `AGENTS.md`: each reads
-`.agents/skills` at its own documented root. The symlink at `.agents/skills`
-pointing at `skills/`, declared by `adapters/codex/wiring.json`, is therefore
-expected to serve a later adapter with no new path. That adapter's manifest
-declares the same link with the same target, which `scripts/check-harness.py`
-accepts. Only one of the five documents following a symlink there.
+`.agents/skills` at its own documented root. A later adapter for a harness
+with no pack support can therefore declare one symlink, `.agents/skills`
+pointing at `wiki/skills`, to reach the wiki skills without an install;
+`scripts/check-harness.py` proves every `SKILL.md` reachable through it.
+Only one of the five documents following a symlink there.
 
 ## What is not built
 
@@ -339,14 +341,14 @@ Three things this file names as absent rather than describing as working.
 1. `scripts/harness-acceptance.py` does not exist. It is the runnable
    acceptance test for the four surfaces. Two scripts that earlier versions of
    this file named as absent now exist under other names:
-   `scripts/sync-harness.py` generates the adapter role and MCP files, and
+   `scripts/sync-harness.py` generates the adapter MCP files, and
    `scripts/check-harness.py` runs the mechanical checks: the symlinks, the
-   reachability of every skill and role, the currency of every generated file,
-   the harness-name scan, and the entrypoint byte cap. The skills-in-prose
+   reachability of every skill through them, the currency of every generated
+   file, the harness-name scan, and the entrypoint byte cap. The skills-in-prose
    assertion, the read-only description assertion, and the delete test are
    still run by hand, per item 8 below.
-2. No per-adapter model registry exists. Neither adapter on disk names a model
-   identifier, so a registry there would hold nothing.
+2. No adapter on disk names a model identifier, because no role lives in this
+   tree to pin one to.
 3. The stub check of criterion 63 has not been run. Nobody has added a stub
    adapter by following the section below, so no date and no name are recorded
    here. Until that run happens, the procedure below is unproven by anybody
@@ -370,28 +372,27 @@ that cites them: `scripts/harness-acceptance.py` in item 6, and `SPEC.md` in
 item 8, which names it as a file this template does not ship and never as a
 file to read.
 
-1. **Know what you may ship.** The six kinds of file are in "What an adapter
-   may hold" above: a `wiring.json` manifest, a mapping file, the generated
-   role files at the harness's own path, one configuration head, one model
-   registry, and a `README.md`. Only the `README.md` is required. Ship nothing
-   of a seventh kind.
+1. **Know what you may ship.** The three kinds of file are in "What an adapter
+   may hold" above: a `wiring.json` manifest, one configuration head, and a
+   `README.md`. Only the `README.md` is required. Ship nothing of a fourth
+   kind.
 2. **Know what passes.** The four surfaces and the pass condition for each are
    in "The four acceptance surfaces" above. Read them before you write
    anything, because they are what the adapter exists to satisfy.
 3. **Retrieve four configuration surfaces from the harness's own
    documentation, before you write anything.** The project instruction file and
-   its load order. The skill discovery paths. The role or subagent declaration,
-   with its file format and required fields. The model provider, with its
-   permission vocabulary.
+   its load order. The skill discovery paths, and how a pack or plugin is
+   installed. The role or subagent declaration, with its file format and
+   required fields, so a pack author knows what to ship. The model provider,
+   with its permission vocabulary.
 4. **Record each one with a source URL and a retrieval date.** Where the
    documentation is silent, write `not documented` and never `not supported`.
    Silence is a gap in the record, not a statement about the harness.
 5. **Declare the wiring, then generate it.** Write
    `adapters/<harness-id>/wiring.json`: a `links` object for every symlink the
-   harness documents, and, where the harness needs them, a `roles` block naming
-   a format `scripts/sync-harness.py` registers, the directory to write into,
-   and the mapping file, and an `mcp` block naming a format, the source
-   `.mcp.json`, the path to write, and the head file. Create the symlinks with
+   harness documents, and, where the harness needs it, an `mcp` block naming a
+   format `scripts/sync-harness.py` registers, the source `.mcp.json`, the
+   path to write, and the head file. Create the symlinks with
    `ln -s` and commit them. Then run `python3 scripts/sync-harness.py`, commit
    what it wrote, and run it again with `--check` to prove a clean tree
    produces no diff. A format the script does not register is exit 2 naming
@@ -419,20 +420,20 @@ file to read.
    python3 scripts/check-harness.py
    ```
 
-   `0 failure(s)` is the pass. The script reads the ten permitted paths,
+   `0 failure(s)` is the pass. The script reads the nine permitted paths,
    skipping `SPEC.md` when this template ships none, strips every
    `adapters/<id>/...` path token from a line, and reports every remaining
    match with its file and line. Zero is the right answer and not a broken
    pattern: every sentence in the neutral core that reaches the adapters
    carries a path and no harness name, so the pattern has nothing to match.
-   The same run also proves your symlinks, the reachability of every skill and
-   role through them, the currency of every generated file, and the size of
-   the entrypoint.
+   The same run also proves your symlinks, the reachability of every skill
+   through them, the currency of every generated file, and the size of the
+   entrypoint.
 
    Second, deleting this whole directory leaves a workbench that still passes
-   its own checks: `python3 scripts/check-roles.py` reports zero failures and
-   zero questions, and `python3 scripts/check-harness.py` reports zero
-   failures, because with no manifest there is nothing to declare.
+   its own checks: `python3 scripts/check-skills.py` reports zero failures,
+   and `python3 scripts/check-harness.py` reports zero failures, because with
+   no manifest there is nothing to declare.
 9. **Start from retrieved evidence, not from a search.** For any harness in the
    matrix above that reads `no adapter`, "Evidence per row" above already holds
    the four surfaces of item 3, each with a source URL and the date it was

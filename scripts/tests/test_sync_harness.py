@@ -1,10 +1,9 @@
 """Tests for scripts/sync-harness.py.
 
-The script renders, per adapter manifest, the generated files a harness
-needs that the neutral core does not carry: one role file per agents/*.md in
-the harness's own format, and one block of MCP server tables from the
-workbench's MCP source. Every path and format identifier comes from
-adapters/*/wiring.json; the script names no harness.
+The script renders, per adapter manifest, the generated files a harness needs
+that the neutral core does not carry: one block of MCP server tables from the
+workbench's MCP source, in the harness's own format. Every path and format
+identifier comes from adapters/*/wiring.json; the script names no harness.
 
 Standard library only. Run with:
 
@@ -14,7 +13,6 @@ Standard library only. Run with:
 import ast
 import importlib.util
 import json
-import os
 import re
 import subprocess
 import sys
@@ -35,31 +33,25 @@ _spec = importlib.util.spec_from_file_location("sync_harness", SCRIPT_PATH)
 sync = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sync)
 
-
-def role_md(name, description="Does one thing.", body="Body line one.\n", skills=None):
-    front = f"---\nname: {name}\ndescription: {description}\n"
-    if skills:
-        front += f"skills: {skills}\n"
-    return front + "---\n\n" + body
-
-
-ROLES_MANIFEST = {
+MCP_MANIFEST = {
     "links": {},
-    "roles": {"format": "toml-agent", "dir": ".x/agents", "mapping": "roles.json"},
+    "mcp": {"format": "toml-mcp-servers", "source": ".mcp.json",
+            "path": ".x/config.toml", "head": "config.toml"},
 }
 
 
 class Fixture:
-    """A workbench tree under a temporary directory."""
+    """A workbench tree under a temporary directory: one pack skill, one
+    adapter, and an MCP source with one local server in it."""
 
-    def __init__(self, manifest=None, mapping=None):
+    def __init__(self, manifest=None, servers=None, head="# head line\n"):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
-        self.write("agents/README.md", "# not a role\n")
-        self.write("agents/alpha.md", role_md("alpha"))
-        self.write("skills/one/SKILL.md", "---\nname: one\ndescription: d\n---\n")
-        self.write("adapters/x/wiring.json", json.dumps(manifest or ROLES_MANIFEST))
-        self.write("adapters/x/roles.json", json.dumps(mapping or {"defaults": {}, "roles": {}}))
+        self.write("wiki/skills/one/SKILL.md", "---\nname: one\ndescription: d\n---\n")
+        self.write("adapters/x/wiring.json", json.dumps(manifest or MCP_MANIFEST))
+        self.write("adapters/x/config.toml", head)
+        self.write(".mcp.json", json.dumps(
+            {"mcpServers": servers if servers is not None else {"local": {"command": "run"}}}))
 
     def write(self, rel, text):
         path = self.root / rel
@@ -78,104 +70,41 @@ class SyncHarnessTest(unittest.TestCase):
         self.addCleanup(self.fx.cleanup)
         self.root = self.fx.root
 
+    def _mcp_tree(self, servers, head="# head line\n"):
+        self.fx.write("adapters/x/wiring.json", json.dumps(MCP_MANIFEST))
+        self.fx.write("adapters/x/config.toml", head)
+        self.fx.write(".mcp.json", json.dumps({"mcpServers": servers}))
+
     # -- TOML string rendering ------------------------------------------------
 
     def test_basic_string_escapes_backslash_quote_newline_and_control(self):
         self.assertEqual(sync.toml_basic('a\\b"c\nd\te\x01'), '"a\\\\b\\"c\\nd\\te\\u0001"')
 
-    @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
-    def test_multiline_string_round_trips_awkward_bodies(self):
-        bodies = [
-            'plain\n',
-            'has """ three quotes\n',
-            'has """" four quotes\n',
-            'ends with a quote "\n',
-            'ends with two quotes ""\n',
-            'back\\slash and \\" escaped-looking text\n',
-            'control \x01 char and tab\t\n',
-            'windows\r\nline\n',
-            'trailing """',
-        ]
-        for body in bodies:
-            with self.subTest(body=body):
-                doc = "v = " + sync.toml_multiline(body) + "\n"
-                self.assertEqual(tomllib.loads(doc)["v"], body)
-
-    # -- rendering one role -----------------------------------------------------
-
-    @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
-    def test_renders_name_description_and_body_as_developer_instructions(self):
-        text = sync.render_toml_agent(
-            "agents/alpha.md", "alpha", 'Does "one" thing.', "Body\nmore\n", [], {})
-        doc = tomllib.loads(text)
-        self.assertEqual(doc["name"], "alpha")
-        self.assertEqual(doc["description"], 'Does "one" thing.')
-        self.assertEqual(doc["developer_instructions"], "Body\nmore\n")
-        self.assertIn("agents/alpha.md", text.splitlines()[0])
-        self.assertTrue(text.splitlines()[0].startswith("#"))
-
-    @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
-    def test_skills_preamble_names_each_skill_file_before_the_body(self):
-        text = sync.render_toml_agent(
-            "agents/alpha.md", "alpha", "d", "Body\n", ["one", "two"], {})
-        instructions = tomllib.loads(text)["developer_instructions"]
-        preamble, _, rest = instructions.partition("\n\n")
-        self.assertIn("skills/one/SKILL.md", preamble)
-        self.assertIn("skills/two/SKILL.md", preamble)
-        self.assertEqual(rest, "Body\n")
-
-    @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
-    def test_no_skills_means_no_preamble(self):
-        text = sync.render_toml_agent("agents/alpha.md", "alpha", "d", "Body\n", [], {})
-        self.assertEqual(tomllib.loads(text)["developer_instructions"], "Body\n")
-
-    @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
-    def test_extra_keys_from_the_mapping_are_emitted_as_top_level_values(self):
-        text = sync.render_toml_agent(
-            "agents/alpha.md", "alpha", "d", "Body\n", [],
-            {"model": "m-1", "sandbox_mode": "read-only", "flag": True})
-        doc = tomllib.loads(text)
-        self.assertEqual(doc["model"], "m-1")
-        self.assertEqual(doc["sandbox_mode"], "read-only")
-        self.assertIs(doc["flag"], True)
-
-    def test_extra_key_of_an_unsupported_type_is_an_input_error(self):
-        with self.assertRaises(sync.SyncError):
-            sync.render_toml_agent("agents/alpha.md", "alpha", "d", "B\n", [], {"n": 3.5})
-
     # -- expected outputs from the manifests ----------------------------------
 
-    def test_one_output_per_role_and_readme_is_not_a_role(self):
-        self.fx.write("agents/beta.md", role_md("beta"))
-        outputs = sync.expected_outputs(self.root)
-        self.assertEqual(sorted(outputs), [".x/agents/alpha.toml", ".x/agents/beta.toml"])
-
-    def test_manifest_without_roles_block_produces_no_role_files(self):
+    def test_manifest_without_an_mcp_block_produces_nothing(self):
         self.fx.write("adapters/x/wiring.json", json.dumps({"links": {"L": "T"}}))
         self.assertEqual(sync.expected_outputs(self.root), {})
 
-    @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
-    def test_mapping_role_entry_overrides_defaults(self):
-        self.fx.write("adapters/x/roles.json", json.dumps(
-            {"defaults": {"model": "m-default", "sandbox_mode": "read-only"},
-             "roles": {"alpha": {"model": "m-alpha"}}}))
-        doc = tomllib.loads(sync.expected_outputs(self.root)[".x/agents/alpha.toml"])
-        self.assertEqual(doc["model"], "m-alpha")
-        self.assertEqual(doc["sandbox_mode"], "read-only")
-
-    def test_mapping_that_names_a_role_with_no_source_file_is_an_input_error(self):
-        self.fx.write("adapters/x/roles.json", json.dumps(
-            {"defaults": {}, "roles": {"ghost": {"model": "m"}}}))
-        with self.assertRaises(sync.SyncError) as ctx:
-            sync.expected_outputs(self.root)
-        self.assertIn("ghost", str(ctx.exception))
+    def test_one_output_per_manifest_that_declares_mcp(self):
+        outputs = sync.expected_outputs(self.root)
+        self.assertEqual(sorted(outputs), [".x/config.toml"])
 
     def test_unknown_format_identifier_is_an_input_error(self):
-        manifest = {"roles": {"format": "yaml-thing", "dir": ".x/agents", "mapping": "roles.json"}}
+        manifest = {"mcp": {"format": "yaml-thing", "source": ".mcp.json",
+                            "path": ".x/config.toml", "head": "config.toml"}}
         self.fx.write("adapters/x/wiring.json", json.dumps(manifest))
         with self.assertRaises(sync.SyncError) as ctx:
             sync.expected_outputs(self.root)
         self.assertIn("yaml-thing", str(ctx.exception))
+
+    def test_mcp_block_missing_a_key_is_an_input_error_naming_it(self):
+        manifest = {"mcp": {"format": "toml-mcp-servers", "source": ".mcp.json",
+                            "path": ".x/config.toml"}}
+        self.fx.write("adapters/x/wiring.json", json.dumps(manifest))
+        with self.assertRaises(sync.SyncError) as ctx:
+            sync.expected_outputs(self.root)
+        self.assertIn("head", str(ctx.exception))
 
     def test_unreadable_manifest_json_is_an_input_error_naming_the_file(self):
         self.fx.write("adapters/x/wiring.json", "{not json")
@@ -183,36 +112,17 @@ class SyncHarnessTest(unittest.TestCase):
             sync.expected_outputs(self.root)
         self.assertIn("adapters/x/wiring.json", str(ctx.exception))
 
-    def test_malformed_role_frontmatter_is_an_input_error(self):
-        self.fx.write("agents/bad.md", "no frontmatter here\n")
-        with self.assertRaises(sync.SyncError) as ctx:
-            sync.expected_outputs(self.root)
-        self.assertIn("agents/bad.md", str(ctx.exception))
-
     # -- inputs the review found unguarded, 2026-09-12 --------------------------
 
-    def test_role_name_that_does_not_match_its_filename_is_an_input_error(self):
-        self.fx.write("agents/alpha.md", role_md("../../escape"))
-        with self.assertRaises(sync.SyncError) as ctx:
-            sync.expected_outputs(self.root)
-        self.assertIn("agents/alpha.md", str(ctx.exception))
-
-    def test_roles_dir_that_escapes_the_root_is_an_input_error(self):
-        for bad in (".x/agents/..", "/tmp/elsewhere", "../outside"):
-            with self.subTest(dir=bad):
-                manifest = {"roles": {"format": "toml-agent", "dir": bad, "mapping": "roles.json"}}
+    def test_an_output_path_that_escapes_the_root_is_an_input_error(self):
+        for bad in (".x/config.toml/..", "/tmp/elsewhere", "../outside"):
+            with self.subTest(path=bad):
+                manifest = {"mcp": {"format": "toml-mcp-servers", "source": ".mcp.json",
+                                    "path": bad, "head": "config.toml"}}
                 self.fx.write("adapters/x/wiring.json", json.dumps(manifest))
                 with self.assertRaises(sync.SyncError) as ctx:
                     sync.stale(self.root)
-                self.assertIn("dir", str(ctx.exception))
-
-    def test_mapping_key_that_is_not_a_bare_toml_key_is_an_input_error(self):
-        for key in ("model reasoning", "a.b", "description", "name", "developer_instructions"):
-            with self.subTest(key=key):
-                self.fx.write("adapters/x/roles.json", json.dumps({"defaults": {key: "v"}, "roles": {}}))
-                with self.assertRaises(sync.SyncError) as ctx:
-                    sync.expected_outputs(self.root)
-                self.assertIn(key, str(ctx.exception))
+                self.assertIn("path", str(ctx.exception))
 
     def test_env_key_that_is_not_a_bare_toml_key_is_an_input_error(self):
         self._mcp_tree({"s": {"command": "c", "env": {"MY.VAR": "1"}}})
@@ -221,20 +131,13 @@ class SyncHarnessTest(unittest.TestCase):
         self.assertIn("MY.VAR", str(ctx.exception))
 
     def test_wrong_json_types_are_input_errors_not_tracebacks(self):
-        cases = [
-            ("adapters/x/roles.json", json.dumps([])),
-            ("adapters/x/roles.json", json.dumps({"defaults": {}, "roles": {"alpha": "str"}})),
-            ("adapters/x/roles.json", json.dumps({"defaults": [], "roles": {}})),
-        ]
-        for rel, text in cases:
-            with self.subTest(rel=rel, text=text):
-                self.fx.write(rel, text)
-                with self.assertRaises(sync.SyncError):
-                    sync.expected_outputs(self.root)
         self._mcp_tree({"s": {"command": 123}})
         with self.assertRaises(sync.SyncError):
             sync.expected_outputs(self.root)
         self._mcp_tree({"s": {"type": "http", "url": "u", "headers": ["x"]}})
+        with self.assertRaises(sync.SyncError):
+            sync.expected_outputs(self.root)
+        self.fx.write(".mcp.json", json.dumps(["not", "an", "object"]))
         with self.assertRaises(sync.SyncError):
             sync.expected_outputs(self.root)
 
@@ -256,47 +159,28 @@ class SyncHarnessTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("--root needs a path", result.stderr)
 
-    # -- stale, write, orphans --------------------------------------------------
+    # -- stale and write --------------------------------------------------------
 
     def test_stale_reports_every_missing_file_before_the_first_write(self):
-        self.assertEqual(sync.stale(self.root), ["missing: .x/agents/alpha.toml"])
+        self.assertEqual(sync.stale(self.root), ["missing: .x/config.toml"])
 
     def test_write_then_stale_is_clean(self):
         lines = sync.write(self.root)
-        self.assertEqual(lines, ["wrote: .x/agents/alpha.toml"])
+        self.assertEqual(lines, ["wrote: .x/config.toml"])
         self.assertEqual(sync.stale(self.root), [])
-        self.assertTrue((self.root / ".x/agents/alpha.toml").is_file())
+        self.assertTrue((self.root / ".x/config.toml").is_file())
 
     def test_edited_output_is_reported_stale(self):
         sync.write(self.root)
-        path = self.root / ".x/agents/alpha.toml"
+        path = self.root / ".x/config.toml"
         path.write_text(path.read_text(encoding="utf-8") + "# hand edit\n", encoding="utf-8")
-        self.assertEqual(sync.stale(self.root), ["stale: .x/agents/alpha.toml"])
-
-    def test_orphan_is_reported_by_check_and_deleted_by_write(self):
-        sync.write(self.root)
-        self.fx.write(".x/agents/gone.toml", 'name = "gone"\n')
-        self.assertEqual(sync.stale(self.root), ["orphan: .x/agents/gone.toml"])
-        lines = sync.write(self.root)
-        self.assertIn("deleted: .x/agents/gone.toml", lines)
-        self.assertFalse((self.root / ".x/agents/gone.toml").exists())
+        self.assertEqual(sync.stale(self.root), ["stale: .x/config.toml"])
 
     def test_write_reports_unchanged_files_as_unchanged(self):
         sync.write(self.root)
-        self.assertEqual(sync.write(self.root), ["unchanged: .x/agents/alpha.toml"])
+        self.assertEqual(sync.write(self.root), ["unchanged: .x/config.toml"])
 
     # -- MCP servers ------------------------------------------------------------
-
-    MCP_MANIFEST = {
-        "links": {},
-        "mcp": {"format": "toml-mcp-servers", "source": ".mcp.json",
-                "path": ".x/config.toml", "head": "config.toml"},
-    }
-
-    def _mcp_tree(self, servers, head="# head line\n"):
-        self.fx.write("adapters/x/wiring.json", json.dumps(self.MCP_MANIFEST))
-        self.fx.write("adapters/x/config.toml", head)
-        self.fx.write(".mcp.json", json.dumps({"mcpServers": servers}))
 
     @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
     def test_local_server_maps_command_args_and_env(self):
@@ -380,13 +264,13 @@ class SyncHarnessTest(unittest.TestCase):
     def test_check_exits_1_and_names_the_path_and_writes_nothing(self):
         result = self._cli("--check", "--root", str(self.root))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("missing: .x/agents/alpha.toml", result.stdout)
+        self.assertIn("missing: .x/config.toml", result.stdout)
         self.assertFalse((self.root / ".x").exists())
 
     def test_default_run_writes_and_exits_0_then_check_exits_0(self):
         result = self._cli("--root", str(self.root))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("wrote: .x/agents/alpha.toml", result.stdout)
+        self.assertIn("wrote: .x/config.toml", result.stdout)
         result = self._cli("--check", "--root", str(self.root))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -396,25 +280,22 @@ class SyncHarnessTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("adapters/x/wiring.json", result.stderr)
 
-    def test_missing_agents_directory_exits_2(self):
-        for name in ("alpha.md", "README.md"):
-            (self.root / "agents" / name).unlink()
-        (self.root / "agents").rmdir()
+    def test_a_tree_with_no_adapters_directory_generates_nothing(self):
+        import shutil
+        shutil.rmtree(self.root / "adapters")
         result = self._cli("--check", "--root", str(self.root))
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("agents", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("0 stale file(s)", result.stdout)
 
     def test_check_leaves_no_bytecode_cache_behind(self):
         """Other test files load the scripts through importlib and leave
-        scripts/__pycache__ behind. Only the two files this script would
-        write are cleared first and checked after."""
+        scripts/__pycache__ behind. Only the file this script would write is
+        cleared first and checked after."""
         cache = WORKBENCH_ROOT / "scripts" / "__pycache__"
-        for stem in ("check-roles", "sync-harness"):
-            for pyc in cache.glob(f"{stem}.*.pyc"):
-                pyc.unlink()
+        for pyc in cache.glob("sync-harness.*.pyc"):
+            pyc.unlink()
         self._cli("--check", "--root", str(self.root))
-        left = [p.name for stem in ("check-roles", "sync-harness") for p in cache.glob(f"{stem}.*.pyc")]
-        self.assertEqual(left, [])
+        self.assertEqual([p.name for p in cache.glob("sync-harness.*.pyc")], [])
         self.assertEqual(list(self.root.rglob("__pycache__")), [])
 
     # -- housekeeping -----------------------------------------------------------
@@ -448,6 +329,13 @@ class SyncHarnessTest(unittest.TestCase):
                              re.IGNORECASE)
         for lineno, line in enumerate(SCRIPT_PATH.read_text(encoding="utf-8").splitlines(), 1):
             self.assertIsNone(pattern.search(line), f"line {lineno} names a harness")
+
+    def test_the_script_carries_no_role_rendering(self):
+        """The template ships no roles. A renderer left behind here would
+        generate files from a source that no longer exists."""
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+        for gone in ("agents/", "render_toml_agent", "ROLE_FORMATS", "role_sources", "orphan"):
+            self.assertNotIn(gone, source)
 
     def test_the_shipped_tree_is_current(self):
         """The committed generated files match their sources byte for byte."""

@@ -16,15 +16,17 @@ stops it asking, is yours to decide.
 
 ## What you are doing
 
-This repo is a clone of a template. It carries a working structure and a set of
-example roles and skills that came out of one practice. The structure
-transfers. The opinions do not: they name a business, a writing standard, a
-buyer segment, and a jurisdiction that are not this owner's.
+This repo is a clone of a template. It carries a working structure, the five
+wiki skills that run its knowledge base, and nothing else that does work. The
+skills, roles, and pipelines that carry code, design, and research arrive as
+packs and plugins the owner chooses here and installs on their own harness.
+The template forces none of them.
 
-Your job is to replace every one of those with this owner's own, and to leave
-nothing half-replaced. A workbench that says "the owner" in nine files and a
-real name in two is worse than one that says "the owner" everywhere, because
-the reader cannot tell which is deliberate.
+Your job is to fill in this owner's identity and rules, to record which packs
+and plugins they chose, and to leave nothing half-replaced. A workbench that
+says "the owner" in four files and a real name in one is worse than one that
+says "the owner" everywhere, because the reader cannot tell which is
+deliberate.
 
 The marker for everything unfilled is a line starting `> FILL:`, indented or
 not. This is the check you run at the end:
@@ -33,9 +35,8 @@ not. This is the check you run at the end:
 grep -rn '^ *> FILL:' --include='*.md' .
 ```
 
-An empty result is the finish line for stages 1 to 4. There are ten: eight in
-`AGENTS.md`, one in `skills/prospect-research/SKILL.md`, one in
-`skills/quarterly-planning/SKILL.md`.
+An empty result is the finish line for stages 1 to 4. There are ten, all in
+`AGENTS.md`.
 
 ---
 
@@ -57,8 +58,8 @@ without `core.symlinks` and on any zip download; the message says what to run.
 Do not continue with a failure standing.
 
 **2. Which harness does the owner run?** The neutral core is what you cloned:
-the entrypoint, the knowledge base, the skills, the roles, the scripts, and
-this file. It names no harness. Every harness-specific path lives in one thin
+the entrypoint, the knowledge base, the wiki pack, the scripts, and this
+file. It names no harness. Every harness-specific path lives in one thin
 adapter under `adapters/`, and `adapters/README.md` is the index: it lists the
 adapters that exist and carries the support matrix, one row per harness. Read
 it with the owner. Take the current list from that index and not from this
@@ -67,8 +68,9 @@ file, because this file goes stale first.
 Two outcomes, and each one is a legitimate end to this step:
 
 - **An adapter exists for their harness.** Its `README.md` opens with the
-  steps for this harness: an optional plugin install, how to start the session,
-  and how to confirm the roles and skills loaded. Walk them.
+  steps for this harness: how to install the wiki pack, how to install the
+  packs chosen in step 3 below, how to start the session, and how to confirm
+  the skills loaded. Walk them after step 3, so there is one install pass.
 - **No adapter exists for their harness.** Adding one is one directory under
   `adapters/` with a manifest and a `README.md`, one row in the support
   matrix, and a run of `python3 scripts/sync-harness.py`, and
@@ -79,7 +81,39 @@ Two outcomes, and each one is a legitimate end to this step:
 Record the harness and the adapter path as the first item in this session's
 report. Stage 5 logs it as a decision.
 
-**3. Point the remote somewhere else.** `origin` is the template. Anything
+**3. Which packs and plugins do the work?** Nothing that does work ships in
+this tree. Four questions, one at a time, each with named variants and never
+a pick made for the owner. `README.md` under "Packs and plugins" lists one
+practice's working set with its install commands, as an example to hold up
+and not as a default to assume.
+
+- **Code, and anything built.** Which plugin carries an idea to a draft pull
+  request? Variants: the set in the README, another the owner names, or none
+  because nobody builds software here. The answer goes into `AGENTS.md` under
+  "How work runs" and into the two code rows of the routing table.
+- **Anything a person looks at.** Which skills bind interface work and which
+  bind client-facing copy? The answer goes into rule 3. "None yet" is an
+  answer; the rule then stays with its marker deleted.
+- **The writing standard.** Which skill carries rule 2, and from where? The
+  answer goes into rule 2. If none, delete the marker and the plain-language
+  rules stand on their own.
+- **Research.** Does a research team run here? If yes, which pack carries its
+  roles and its operating procedure? The answer goes into "How work runs" and
+  the research row of the routing table. If no, write "None" there and delete
+  the research row.
+
+For each pack the owner chooses, take the install command from the pack's own
+README or from the harness's adapter `README.md`, run it on this machine, and
+record the pack, its version, and the marketplace it came from in this
+session's report. Stage 5 logs the set as a decision. The wiki pack is not a
+question: install it, from this repo, unless the owner brings one that runs
+the same five operations.
+
+A plugin that loads into every session costs tokens in every session. Before
+enabling one everywhere, measure it; the adapter's `README.md` says how on
+its harness. Enabling per repository is the lever that prunes the cost.
+
+**4. Point the remote somewhere else.** `origin` is the template. Anything
 pushed there goes to the template, not to this workbench.
 
 ```bash
@@ -100,9 +134,11 @@ than inventing a URL. Record it in this session's report.
 
 ## Stage 1: the identity and the always-on rules
 
-Open `AGENTS.md`. It has eight `> FILL:` blocks. Work them in order, asking one
-question at a time and waiting for the answer. Do not guess an answer from
-context and do not batch the questions into one wall.
+Open `AGENTS.md`. It has ten `> FILL:` blocks, and stage 0 step 3 has already
+answered four of them: rule 2, rule 3, and the two under "How work runs".
+Write those answers in now, then work the rest in order, asking one question
+at a time and waiting for the answer. Do not guess an answer from context and
+do not batch the questions into one wall.
 
 **1. What this workbench is for.** One paragraph, in the owner's words. What
 work happens here, and what it is not for.
@@ -112,113 +148,72 @@ owner's name and what the business or team is called.
 
 Then decide with them how the name enters the files. Two variants:
 
-- **Keep "the owner" everywhere.** Every role and skill already reads this way.
+- **Keep "the owner" everywhere.** Every wiki skill already reads this way.
   Nothing to change. Costs nothing, reads slightly impersonally.
-- **Use their name everywhere.** One pass across `agents/` and `skills/`:
-  `grep -rln 'the owner' --include='*.md' agents skills` finds every file.
-  Reads better. It must be done in full or not at all.
+- **Use their name everywhere.** One pass across `wiki/skills/`:
+  `grep -rln 'the owner' --include='*.md' wiki/skills` finds every file.
+  Reads better. It must be done in full or not at all. A pack installed from
+  elsewhere is not in this tree and is not touched.
 
 Name both. Do not pick.
 
 Do the same for "the practice", which is the placeholder for the business name
 and appears in the same files.
 
-**3. Rule 2, the writing standard.** Ask whether they have a writing standard
-skill to install. If they do, install it under `skills/<name>/SKILL.md` and
-name it in rule 2, then in the `skills:` frontmatter of `research-editor.md`.
-If they do not, delete the `> FILL:` line and leave the plain-language rules
-that follow it standing. Say which you did.
+**3. Rule 2, the writing standard.** Write in the answer from stage 0 step 3:
+the skill's name and the pack or marketplace it is installed from. If none,
+delete the `> FILL:` marker and leave the plain-language rules standing. Say
+which you did.
 
-**4. Rule 3, interface and copy standards.** Same question for interface work
-and client-facing copy. If they install any, name them in rule 3.
+**4. Rule 3, interface and copy standards.** Same, from the same step. If
+none, delete the marker and leave the rule standing.
 
 **5. Rule 9, the names that never appear in client-facing material.** Ask
 directly: are there employers, clients, or partners that must not be named in
 anything a client sees? List them, or write "None" and leave the rule
 standing. Several skills cite rule 9 by number, so the rule stays either way.
 
-**6. The routing table and the on-disk table.** Add a row per skill installed in
-this stage, and a row per project repo the owner intends to nest here. For each
-project repo, also add its directory to `.gitignore` and to the `dirs` list in
-`skills/wiki-verify/SKILL.md`.
+**6. "How work runs", the routing table, and the on-disk table.** Write the
+code and research answers from stage 0 step 3 into "How work runs", replace
+the three routing rows that point there with the chosen names, and add a row
+per installed skill a session should route to by name. Add a row to the
+on-disk table per project repo the owner intends to nest here. For each
+project repo, also add its directory to `.gitignore` and to the `dirs` list
+in `wiki/skills/wiki-verify/SKILL.md`.
 
 ---
 
-## Stage 2: read the agent roles
+## Stage 2: the packs load
 
-There are six in `agents/`, all research roles, and every one of them is an
-example. Read `agents/README.md` first, then work the table in it.
+Every pack chosen in stage 0 step 3 is installed by now. Prove it before
+anything depends on it: open a session at the workbench root and confirm, the
+way the adapter's `README.md` says for this harness, that the wiki pack's five
+skills and each chosen pack's skills and roles are listed. A pack that is
+installed and not listed is a pack that will silently not run.
 
-For each role, put one question to the owner: keep, edit, or delete. Give them
-what they need to answer it in one line, not a summary of the whole file.
+A pack that ships roles carries its own README saying what each role does and
+what it writes. Read it with the owner. A role kept without reading is a role
+that will make decisions the owner did not agree to. Editing a role means
+editing it in the pack's own repository, never in this tree, which holds no
+copy.
 
-Code and design work does not run through a role here. It runs through the
-plugin named under "How work runs" in `AGENTS.md`, which the owner installs on
-their harness following the adapter's `README.md`. If the owner does not build
-software in this workbench, say so in that section instead of leaving a
-pipeline nobody runs.
-
-Delete a role by deleting its file and its row in `agents/README.md`. Do not
-leave a row pointing at a file that is gone.
-
-After any change:
-
-```bash
-python3 scripts/check-roles.py
-python3 scripts/sync-harness.py
-```
-
-Zero failures from the first before you move on. A harness skips a malformed
-role file in silence, so this script is the only thing that reports one. The
-second regenerates the copy of each role that a harness reads in its own
-format; a role you edited or deleted has one, and `python3
-scripts/check-harness.py` fails until it is regenerated. Commit what it wrote.
-
-`scripts/model-registry.txt` ships with no values in it, and no role file names a
-model, so the model check never fires on the tree you cloned. You need the
-registry only if you add a `model:` value to a role file. A value that is not
-registered is reported as a question, not a failure, and the answer is either a
-typo in the role file or one new line in the registry saying what the value is
-and where you read it. Where an adapter maps each role to a model, that mapping
-is the better home for an identifier and the registry stays empty.
+Record, per pack: its name, its version, its marketplace, and the date the
+listing was confirmed. That record goes into stage 5's decision entry.
 
 ---
 
-## Stage 3: the research skills
+## Stage 3: the sections a pack leaves empty
 
-Seven of the thirteen installed skills describe how to research something.
-Two of them have sections left deliberately empty, because they cannot be
-written once for everybody.
+Some packs ship a section that cannot be written once for everybody: a buyer
+segment, a jurisdiction's records of authority, a compliance calendar. The
+pack's README names them. Work each one with the owner now, in the pack's own
+repository, and never fill one from memory. Root rules 4 and 5 bind here as
+hard as anywhere: a registry URL or a filing deadline from memory is exactly
+the failure a research pack exists to prevent. Either research each row
+against the authority's own page and cite it, or leave it reading "not
+checked" and open an item saying so.
 
-**`skills/prospect-research/SKILL.md`** has two: the buyer segment, and the
-tier 1 records of authority for the jurisdiction. Ask the owner who they sell
-to, where, and what researching one prospect establishes. Then find the actual
-tools for that jurisdiction: the business registry, the property records
-search, the licences portal, the trade regulator, the local licensing office.
-Verify each URL loads before you write it down. Root rule 4 binds here as hard
-as anywhere: a registry URL from memory is exactly the failure this skill
-exists to prevent.
-
-Also name the tier 2 services the segment actually uses. The generic list in
-the file invites a guess.
-
-**`skills/quarterly-planning/SKILL.md`** has the compliance calendar, which is
-empty for the same reason. Do not fill it from memory under any circumstance.
-Either research each row against the agency's own page and cite it, or leave
-the rows reading "not checked" and open an item saying so. A confident wrong
-filing deadline is the worst single thing this workbench could contain.
-
-**`skills/competitor-research/SKILL.md`** and
-**`skills/purchase-research/SKILL.md`** carry market figures and rate data from
-the practice this template came from, each with its source and date. Those are
-real citations, not placeholders, but they are now old and they describe one
-market. Read them with the owner and decide per figure: keep with the date
-visible, re-research, or cut.
-
-If the owner does not do research runs at all, delete all seven research skills
-and the six research roles, and cut the research rows from `agents/README.md`
-and the routing table. That is a legitimate outcome, and a smaller workbench is
-a better one.
+If no chosen pack ships such a section, say so and move on.
 
 ---
 
@@ -249,10 +244,10 @@ numbers of the stages around it do not move. It has two halves, and only the
 first can run today.
 
 **First, the wiring.** Run `python3 scripts/check-harness.py` again, now that
-stages 1 to 3 have edited roles and skills. Zero failures. Then do the
-confirmation the adapter's `README.md` gives for this harness: open a session
-at the root and see the roles and the skills listed where that README says they
-appear. Write the date into the `Wiring` column of that harness's row in the
+stages 1 to 3 have edited the entrypoint and the wiki skills. Zero failures.
+Then do the confirmation the adapter's `README.md` gives for this harness:
+open a session at the root and see the wiki skills listed where that README
+says they appear. Write the date into the `Wiring` column of that harness's row in the
 support matrix, as `checked YYYY-MM-DD`, and into the "Wiring check" section
 of the adapter's `README.md`. That column records a check of files and a
 listing on screen, nothing more.
@@ -291,16 +286,16 @@ Empty, or a named reason per remaining line.
 **2. No half-replaced placeholders.**
 
 ```bash
-grep -rn 'the owner\|the practice' --include='*.md' agents skills AGENTS.md | wc -l
+grep -rn 'the owner\|the practice' --include='*.md' wiki/skills AGENTS.md | wc -l
 ```
 
 The count is either zero, or it is every occurrence. Anything between means the
 pass in stage 1 was partial. Finish it.
 
-**3. Roles and skills load, and every harness copy is current.**
+**3. The wiki skills are well formed, and every harness copy is current.**
 
 ```bash
-python3 scripts/check-roles.py
+python3 scripts/check-skills.py
 python3 scripts/check-harness.py
 python3 scripts/check-open-items.py
 ```
@@ -314,14 +309,15 @@ the close line to `central-context/log.md`, and leave nothing struck through.
 
 **5. Log the decisions.** Anything the owner settled in stages 0 to 3 that a
 future session would otherwise re-litigate earns a `DECISIONS.md` entry. The
-harness from stage 0 is one of them. Write each entry with the question, the
-variants, and their answer.
+harness from stage 0 is one of them, and the set of packs and plugins, with
+their versions and marketplaces, is another. Write each entry with the
+question, the variants, and their answer.
 
 **6. The neutral core stayed neutral.** This is the last check before the commit,
 and it has two halves.
 
 First, no file in the neutral core names a harness. The neutral core is
-`AGENTS.md`, `central-context/`, `skills/`, `agents/`, `scripts/`, `prompts/`,
+`AGENTS.md`, `central-context/`, `wiki/`, `scripts/`, `prompts/`,
 `DECISIONS.md`, `README.md` and `.gitignore`. `SPEC.md` belongs to that list too,
 and the template ships none, so nothing is missing while that file is absent.
 `python3 scripts/check-harness.py`, which item 3 ran, scans those paths for
@@ -343,16 +339,14 @@ tree:
 rm -rf /tmp/neutral-core-check
 cp -R . /tmp/neutral-core-check
 rm -rf /tmp/neutral-core-check/adapters
-(cd /tmp/neutral-core-check && python3 scripts/check-roles.py && python3 scripts/check-harness.py)
+(cd /tmp/neutral-core-check && python3 scripts/check-skills.py && python3 scripts/check-harness.py)
 rm -rf /tmp/neutral-core-check
 ```
 
-Zero failures and zero questions from the first, and zero failures from the
-second, which with no adapter left has nothing to declare and no pattern to
-scan for. Anything else means the neutral core depends on
-something an adapter carries, and the fix belongs in the neutral core: move the
-dependency into the adapter, or drop it. A question names a `model:` value that
-is not registered, and it counts against this check the same way a failure does.
+Zero failures from both. The second, with no adapter left, has nothing to
+declare and no pattern to scan for. Anything else means the neutral core
+depends on something an adapter carries, and the fix belongs in the neutral
+core: move the dependency into the adapter, or drop it.
 
 **7. Commit.** Branch, commit, open a draft pull request. Never commit directly
 to `main`. Root `AGENTS.md` carries the attribution lines.
@@ -366,5 +360,7 @@ to `main`. Root `AGENTS.md` carries the attribution lines.
   memory. Root rules 4 and 5 bind: retrieve it or record the gap.
 - Write a result into the support matrix that no run produced.
 - Pick one of two named variants on the owner's behalf. Root rule 8.
-- Delete a role or a skill because it looked unused. Ask.
+- Install a pack the owner did not choose, or skip one they did.
+- Edit an installed pack's files in this tree. They are not here; edit the
+  pack's own repository.
 - Leave the placeholder pass half done.

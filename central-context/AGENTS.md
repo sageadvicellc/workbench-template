@@ -26,7 +26,7 @@ The pattern has three layers, and this workbench adds a fourth:
 | Raw sources, immutable | `raw/` | A person, or an agent acting on an explicit instruction to file a source |
 | The wiki, maintained | `wiki/` | The agent, on every ingest, query, and lint |
 | The schema | this file | A person and the agent together |
-| Research deliverables, outside the pattern | `docs/` | The research roles, per the `research-operations` skill |
+| Research deliverables, outside the pattern | `docs/` | The research roles of whichever pack carries them, per that pack's operating-procedure skill |
 
 The skeleton below exists and holds no pages. Create a domain directory the
 first time a page needs it, and not before.
@@ -38,8 +38,9 @@ sources. It is not the operating manual: the root `AGENTS.md` carries that.
 
 ### What is not knowledge
 
-`skills/`, `agents/`, and `scripts/` are code and configuration. They do not
-compile into wiki pages and they do not belong in `raw/`. They move by copy.
+`wiki/skills/`, `scripts/`, and every installed pack are code and
+configuration. They do not compile into wiki pages and they do not belong in
+`raw/`. They move by copy.
 
 **No code lives in this directory. Ever.** Not a script, not a hook, not a
 plugin. A knowledge base that also ships code is two things wearing one name.
@@ -80,8 +81,8 @@ source lands on the same subject, not on the first.
 
 `docs/` is outside the other three layers: a deliverable is not a source until
 someone files it to `raw/` through ingest, it is not a page, and lint does not
-check it. Only the research roles in `../agents/` write there, in the formats
-the `research-operations` skill sets. A file in `docs/` that a page cites is a
+check it. Only a research pack's roles write there, in the formats that
+pack's operating-procedure skill sets. A file in `docs/` that a page cites is a
 bug; the page cites the raw source the ingest created.
 
 Move a page from `domains/` to `global/` when a second domain links to it. Do

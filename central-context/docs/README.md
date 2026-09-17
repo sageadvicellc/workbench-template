@@ -1,6 +1,6 @@
 ---
 type: index
-updated: 2026-09-11
+updated: 2026-09-17
 ---
 
 # docs
@@ -10,8 +10,7 @@ brief was written and a slug of three words or fewer.
 
 This is not the wiki. Nothing here is a wiki page, `wiki-lint` does not check
 it, and nothing here is a source until someone files it through `wiki-ingest`.
-The research roles in `../../agents/` write here and nowhere else in this
-directory.
+The research pack's roles write here and nowhere else in this directory.
 
 Each run folder holds:
 
@@ -23,8 +22,10 @@ Each run folder holds:
 | `<deliverable>.md` | `research-editor` | The document the owner reads |
 | `BLOCKED.md` | any role | Only while a role is blocked |
 
-The formats are in the `research-operations` skill. The stages are in
-`../../agents/README.md`.
+The formats, the stages, and the role names above are set by the research
+pack chosen at setup, in its operating-procedure skill and its README. The
+layout here is what any such pack writes into; a pack that names its roles
+or files differently says so in its own README.
 
 ## Runs
 

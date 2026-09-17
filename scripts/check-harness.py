@@ -10,10 +10,9 @@ matches every declaration:
 1. Every declared symlink exists, is a symlink, points at the declared target,
    and the target exists. Two adapters may declare the same link with the
    same target; two targets for one path is a failure.
-2. Every `skills/<dir>/SKILL.md` is a readable file through every link that
-   resolves to `skills/`, and every `agents/*.md` through every link that
-   resolves to `agents/`. A link that exists but leads to a partial copy, or
-   to the wrong directory, fails here with the file named.
+2. Every `<dir>/SKILL.md` a link's destination holds is a readable file
+   through that link. A link that exists but leads to a partial copy, or to
+   the wrong directory, fails here with the file named.
 3. Every generated file is current, by `sync-harness.py --check`.
 4. No line in the neutral core matches a pattern in
    `adapters/harness-names.txt`, after tokens of the form `adapters/<id>/...`
@@ -55,9 +54,10 @@ ENTRYPOINT_CAP = 32768
 # The permitted paths of the neutral core, per adapters/README.md. Absent ones
 # are skipped; SPEC.md is on the list and the template ships none.
 CORE_PATHS = (
-    "AGENTS.md", "central-context", "skills", "agents", "scripts", "prompts",
-    "DECISIONS.md", "SPEC.md", "README.md", ".gitignore",
+    "AGENTS.md", "central-context", "wiki", "scripts",
+    "prompts", "DECISIONS.md", "SPEC.md", "README.md", ".gitignore",
 )
+SKILL_FILE = "SKILL.md"
 ADAPTER_TOKEN = re.compile(r"adapters/[a-z0-9-]+(?:/[^\s`)]*)?")
 SYMLINK_HINT = ("On Windows: turn on Developer Mode or run as Administrator, "
                 "then git config core.symlinks true, then git checkout -- .")
@@ -135,25 +135,34 @@ def _declared_destination(root, rel, target):
     return Path(os.path.normpath((root / rel).parent / target))
 
 
+def _skill_dirs(destination):
+    """Every `<dir>/SKILL.md` directly inside a directory, sorted by name.
+
+    Any directory that holds one is a skills root, whatever it is called, so
+    a link an adapter points at a pack's skills is proven the same way as one
+    pointed at a flat skills directory.
+    """
+    if not destination.is_dir():
+        return []
+    try:
+        entries = sorted(destination.iterdir())
+    except OSError:
+        return []
+    return [e for e in entries
+            if not e.name.startswith(".") and e.is_dir() and (e / SKILL_FILE).is_file()]
+
+
 def check_reachable(root, links, failures):
-    skills_dir = Path(os.path.normpath(root / "skills"))
-    agents_dir = Path(os.path.normpath(root / "agents"))
     for rel, target in links.items():
         destination = _declared_destination(root, rel, target)
-        if destination == skills_dir and skills_dir.is_dir():
-            for skill in sorted(skills_dir.iterdir()):
-                if skill.name.startswith(".") or not skill.is_dir():
-                    continue
-                source = f"skills/{skill.name}/SKILL.md"
-                if (skills_dir / skill.name / "SKILL.md").is_file() \
-                        and not (root / rel / skill.name / "SKILL.md").is_file():
-                    failures.append(f"{source}: not reachable through {rel}")
-        elif destination == agents_dir and agents_dir.is_dir():
-            for role in sorted(agents_dir.glob("*.md")):
-                if role.name == "README.md":
-                    continue
-                if not (root / rel / role.name).is_file():
-                    failures.append(f"agents/{role.name}: not reachable through {rel}")
+        for skill in _skill_dirs(destination):
+            source = (skill / SKILL_FILE)
+            try:
+                named = source.relative_to(root).as_posix()
+            except ValueError:
+                named = source.as_posix()
+            if not (root / rel / skill.name / SKILL_FILE).is_file():
+                failures.append(f"{named}: not reachable through {rel}")
 
 
 # --- 3. generated files ------------------------------------------------------

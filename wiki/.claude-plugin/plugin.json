@@ -1,0 +1,6 @@
+{
+  "name": "wiki",
+  "version": "1.0.0",
+  "description": "The five operations that keep a knowledge base true: ingest, query, lint, verify, open items.",
+  "author": { "name": "Sage Advice LLC" }
+}
