@@ -79,14 +79,19 @@ def _plan_new_agent(cfg, agent, root):
         "role": agent["role"],
         "title": agent.get("title"),
         "adapterType": _adapter_type(agent),
-        "adapterConfig": _desired_adapter(cfg, agent, root),
+        # The server refuses promptTemplate on a new agent. The second pass in
+        # main() sets it with a PATCH once the agent exists.
+        "adapterConfig": {k: v for k, v in _desired_adapter(cfg, agent, root).items() if k != "promptTemplate"},
         "runtimeConfig": d["runtimeConfig"],
         "permissions": d["permissions"],
         "instructionsBundle": {"entryFile": "AGENTS.md",
                                "files": {"AGENTS.md": _instructions(agent, root)}},
     }
-    return Action("POST", f"/api/companies/{cfg['companyId']}/agents", body,
-                  f"agent {agent['name']}: create")
+    # With board approval required, even the board hires through /agent-hires.
+    # run_actions approves the hire it creates, because running this script
+    # with --apply is the board's approval.
+    return Action("POST", f"/api/companies/{cfg['companyId']}/agent-hires", body,
+                  f"agent {agent['name']}: hire")
 
 
 def _plan_existing_agent(cfg, agent, live, client, root):
@@ -113,6 +118,14 @@ def _plan_existing_agent(cfg, agent, live, client, root):
     heartbeat = {**runtime.get("heartbeat", {}), **d["runtimeConfig"]["heartbeat"]}
     if heartbeat != runtime.get("heartbeat"):
         patch["runtimeConfig"] = {**runtime, "heartbeat": heartbeat}
+        # The server stores a model profile without `adapterConfig` but rejects
+        # one sent back that way, so an echoed profile gets an empty one.
+        profiles = runtime.get("modelProfiles")
+        if isinstance(profiles, dict):
+            patch["runtimeConfig"]["modelProfiles"] = {
+                name: ({"adapterConfig": {}, **prof} if isinstance(prof, dict) else prof)
+                for name, prof in profiles.items()
+            }
     if patch:
         changed = sorted(set(patch) - {"adapterConfig", "replaceAdapterConfig"} | {f"adapterConfig.{k}" for k in adapter})
         actions.append(Action("PATCH", f"/api/agents/{aid}", patch, f"agent {agent['name']}: set {changed}"))
@@ -155,8 +168,19 @@ def run_actions(actions, client, apply, echo=None):
             except PaperclipError as err:
                 raise PaperclipError(f"{n - 1} of {len(actions)} change(s) applied before this failure: {err}") from err
             note = ""
-            if action.method == "POST" and action.path.endswith("/agents") and result:
-                note = f" (new id {result.get('id')}; copy it into company.json)"
+            if action.path.endswith("/agent-hires") and result:
+                agent = result.get("agent") or {}
+                approval = result.get("approval") or {}
+                if approval.get("id"):
+                    try:
+                        client.send("POST", f"/api/approvals/{approval['id']}/approve",
+                                    {"decisionNote": "Approved by paperclip-apply.py --apply"})
+                    except PaperclipError as err:
+                        raise PaperclipError(
+                            f"{n} of {len(actions)} change(s) applied. The hire of {action.body.get('name')} "
+                            f"landed as agent {agent.get('id')}, but its approval {approval['id']} failed, "
+                            f"so approve it in the Paperclip UI: {err}") from err
+                note = f" (new id {agent.get('id')}; copy it into company.json)"
             line = f"done: {action.summary}{note}"
         else:
             line = f"plan: {action.method} {action.path} :: {action.summary}"
@@ -181,6 +205,13 @@ def main(argv=None):
             for a in actions:
                 print(f"{a.method} {a.path}\n{json.dumps(a.body, indent=2)}\n")
         run_actions(actions, client, args.apply, echo=print)
+        if args.apply and actions:
+            # A hire gets a default task-assign grant after creation, so a
+            # second pass puts the permissions back to what the config says.
+            again = plan_actions(cfg, client)
+            if again:
+                print(f"second pass: {len(again)} change(s) the first pass set off")
+                run_actions(again, client, True, echo=print)
     except PaperclipError as err:
         print(f"error: {err}", file=sys.stderr)
         return 1

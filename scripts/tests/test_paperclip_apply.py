@@ -153,6 +153,16 @@ class PlanTests(unittest.TestCase):
         put = by_path[("PUT", f"/api/agents/{EMERY}/instructions-bundle/file")].body
         self.assertEqual(put, {"path": "AGENTS.md", "content": "# Emery\n"})
 
+    def test_echoed_model_profile_gets_the_adapter_config_the_server_requires(self):
+        live = live_emery(runtimeConfig={"heartbeat": {"enabled": True},
+                                         "modelProfiles": {"cheap": {"enabled": False}}})
+        gets = base_gets([live], company={"requireBoardApprovalForNewAgents": True},
+                         labels=[{"name": "scope-creep"}], files={EMERY: "# Emery\n"})
+        actions = self.plan([EMERY_CFG], gets)
+        patch = next(a.body for a in actions if a.path == f"/api/agents/{EMERY}")
+        self.assertEqual(patch["runtimeConfig"]["modelProfiles"],
+                         {"cheap": {"adapterConfig": {}, "enabled": False}})
+
     def test_matching_agent_plans_no_writes(self):
         live = live_emery(
             title="Chief of staff",
@@ -171,13 +181,13 @@ class PlanTests(unittest.TestCase):
         actions = self.plan([RESEARCH_CFG], gets)
         self.assertEqual(len(actions), 1)
         body = actions[0].body
-        self.assertEqual((actions[0].method, actions[0].path), ("POST", f"/api/companies/{CID}/agents"))
+        self.assertEqual((actions[0].method, actions[0].path), ("POST", f"/api/companies/{CID}/agent-hires"))
         self.assertEqual(body["name"], "Research lead")
         self.assertEqual(body["role"], "researcher")
         self.assertEqual(body["instructionsBundle"],
                          {"entryFile": "AGENTS.md", "files": {"AGENTS.md": "# Research lead\n"}})
         self.assertEqual(body["permissions"]["canAssignTasks"], False)
-        self.assertEqual(body["adapterConfig"]["promptTemplate"], "WAKE {{agent.id}}\n")
+        self.assertNotIn("promptTemplate", body["adapterConfig"])
 
     def test_agent_without_id_is_matched_by_name(self):
         live = live_emery(id="agent-r", name="Research lead", role="researcher")
@@ -248,6 +258,34 @@ class ApplyTests(unittest.TestCase):
             pa.run_actions(actions, client, apply=True, echo=echoed.append)
         self.assertIn("1 of 2", str(ctx.exception))
         self.assertEqual(echoed, ["done: x"])
+
+    def test_hire_is_approved_in_the_same_step(self):
+        class Hiring(FakeClient):
+            def send(self, method, path, body=None):
+                super().send(method, path, body)
+                if path.endswith("/agent-hires"):
+                    return {"agent": {"id": "a-new"}, "approval": {"id": "ap-1"}}
+                return {}
+
+        client = Hiring({})
+        lines = pa.run_actions([pa.Action("POST", "/api/companies/c/agent-hires", {"name": "R"}, "hire R")],
+                               client, apply=True)
+        self.assertEqual([w[1] for w in client.writes],
+                         ["/api/companies/c/agent-hires", "/api/approvals/ap-1/approve"])
+        self.assertIn("a-new", lines[0])
+
+    def test_failed_approval_says_the_hire_landed(self):
+        class HalfHire(FakeClient):
+            def send(self, method, path, body=None):
+                if path.endswith("/approve"):
+                    raise pa.PaperclipError("503")
+                return {"agent": {"id": "a-new"}, "approval": {"id": "ap-1"}}
+
+        with self.assertRaises(pa.PaperclipError) as ctx:
+            pa.run_actions([pa.Action("POST", "/api/companies/c/agent-hires", {"name": "R"}, "hire R")],
+                           HalfHire({}), apply=True)
+        self.assertIn("landed as agent a-new", str(ctx.exception))
+        self.assertIn("1 of 1", str(ctx.exception))
 
     def test_apply_sends_each_action_in_order(self):
         client = FakeClient({})

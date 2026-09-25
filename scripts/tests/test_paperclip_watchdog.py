@@ -135,6 +135,51 @@ class ScopeCreepTests(unittest.TestCase):
         self.assertEqual(d.actions[0].body["status"], "backlog")
 
 
+def assigned(to, actor_type, actor):
+    return {"action": "issue.updated", "actorType": actor_type, "actorId": actor,
+            "details": {"changes": {"assigneeAgentId": {"from": None, "to": to}}}}
+
+
+class GateTests(unittest.TestCase):
+    def gate(self, events, status="todo"):
+        iss = issue("t1", createdByUserId="local-board", createdByAgentId=None,
+                    assigneeAgentId="a-research", status=status)
+        return wd.decide(CFG, [], [iss], AGENTS, set(), LABEL, NOW, {"t1": events})
+
+    def test_agent_assignment_is_sent_back_and_the_assigner_paused(self):
+        d = self.gate([assigned("a-research", "agent", "a-emery")])
+        by_path = {a.path: a for a in d.actions}
+        body = by_path["/api/issues/t1"].body
+        self.assertEqual((body["status"], body["assigneeAgentId"], body["assigneeUserId"]),
+                         ("in_review", None, "local-board"))
+        self.assertIn("/api/agents/a-emery/pause", by_path)
+
+    def test_board_assignment_passes(self):
+        self.assertEqual(self.gate([assigned("a-research", "user", "local-board")]).actions, [])
+
+    def test_latest_assignment_decides(self):
+        events = [assigned("a-research", "user", "local-board"), assigned("a-research", "agent", "a-emery")]
+        self.assertEqual(self.gate(events).actions, [])
+
+    def test_closed_or_review_issue_is_not_checked(self):
+        self.assertEqual(self.gate([assigned("a-research", "agent", "a-emery")], status="in_review").actions, [])
+
+    def test_agent_made_issue_handed_to_an_agent_gets_one_patch(self):
+        iss = issue("t2", assigneeAgentId="a-research", status="todo")
+        d = wd.decide(CFG, [], [iss], AGENTS, set(), LABEL, NOW,
+                      {"t2": [assigned("a-research", "agent", "a-emery")]})
+        patches = [a for a in d.actions if a.path == "/api/issues/t2"]
+        self.assertEqual(len(patches), 1)
+        self.assertEqual(patches[0].body["status"], "backlog")
+        self.assertIn("without board approval", patches[0].body["comment"])
+        self.assertIn("/api/agents/a-emery/pause", [a.path for a in d.actions])
+
+    def test_candidates_are_open_agent_held_issues(self):
+        issues = [issue("x", assigneeAgentId="a", status="todo"), issue("y", status="todo"),
+                  issue("z", assigneeAgentId="a", status="done")]
+        self.assertEqual([i["id"] for i in wd.gate_candidates(issues)], ["x"])
+
+
 class RobustnessTests(unittest.TestCase):
     def test_bad_timestamp_counts_toward_the_cap(self):
         runs = [run("a-emery", "2026-09-26T01:00:00Z"), {"agentId": "a-emery", "createdAt": "not a date"}]

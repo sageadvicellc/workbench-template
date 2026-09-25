@@ -15,6 +15,8 @@ Build it small on purpose. One practice ran six agents that delegated to each ot
 - Paperclip wakes an agent on every assignment, comment, child completion, and blocker change. When agents open issues for each other, each issue wakes the next agent.
 - The default wake prompt of Paperclip's local adapters tells every agent to create child issues for delegated work. Each agent obeyed.
 
+A third fact matters as much. Paperclip lets every active agent assign tasks, whatever its `canAssignTasks` flag says. The flag is advisory, so the watchdog enforces the approval gate from each ticket's activity log.
+
 The design below removes both causes. Keep it that way unless the owner decides otherwise with the reasons in front of them.
 
 ---
@@ -28,7 +30,7 @@ The design below removes both causes. Keep it that way unless the owner decides 
 | A lead per kind of work | Wakes on a ticket the owner approved. Runs the workbench's roles for that work inside one run. Hands the ticket back with the result |
 | Scope-creep filings | Any work outside the scope becomes an unassigned `backlog` issue with the `scope-creep` label. Nobody wakes on it. Only the owner promotes one |
 | The wake prompt | Replaces the adapter default. Forbids delegation issues and ends every run with a hand-back |
-| The watchdog | A script with no model in it. Pauses an agent at a daily run cap or after a burst of login failures, and parks issues no person created |
+| The watchdog | A script with no model in it. Pauses an agent at a daily run cap or after a burst of login failures, parks issues no person created, and sends back any ticket an agent assigned to an agent |
 
 The ticket lifecycle:
 
@@ -113,7 +115,7 @@ Write these files at the workbench root. They are the source of truth. The serve
   },
   "agents": [
     {
-      "key": "chief", "id": "<onboarding agent id>", "name": "<name>", "role": "ceo",
+      "key": "chief", "id": "<onboarding agent id>", "name": "<name>", "role": "pm",
       "title": "Chief of staff", "adapterType": "<adapter id>",
       "instructionsFile": "paperclip/agents/chief/AGENTS.md",
       "adapterConfig": { "maxTurnsPerRun": 60, "timeoutSec": 900 }, "runsPerDay": 8
@@ -122,12 +124,13 @@ Write these files at the workbench root. They are the source of truth. The serve
   "watchdog": {
     "authFailureBurst": 3,
     "authFailurePattern": "<the login-expiry text the owner's runtime writes>",
+    "boardUserId": "<owner's board user id>",
     "logFile": ".paperclip/watchdog.log"
   }
 }
 ```
 
-Add one entry to `agents` per lead, with its own key, name, role, adapter, instructions file, and caps. The three `experimental` switches turn off server features that create work without a person. If the adapter has a permission-skip switch, set it `false` in that adapter's profile, because some adapters default it to `true`.
+Add one entry to `agents` per lead, with its own key, name, role, adapter, instructions file, and caps. No agent gets the role `ceo`. The owner is the CEO, and a `ceo` agent can change other agents' permissions. The onboarding agent moves from `ceo` to `pm` on apply. The three `experimental` switches turn off server features that create work without a person. If the adapter has a permission-skip switch, set it `false` in that adapter's profile, because some adapters default it to `true`.
 
 **2. `paperclip/wake-prompt.md`.** Write this text, with the two role roots filled in from the installed packs. Keep every line of the run contract.
 
@@ -200,7 +203,7 @@ On yes:
 python3 scripts/paperclip-apply.py --apply
 ```
 
-Each created agent prints its new id. Write each id into `company.json`, then run the dry run again. `in sync: nothing to change` is the pass. A failure part way through says how many changes landed. Fix the cause and run it again, because every step compares before it writes.
+With `requireBoardApprovalForNewAgents` on, even the board hires through an approval. The script files each hire and approves it in the same step, then a second pass sets what a hire cannot carry. Each created agent prints its new id. Write each id into `company.json`, then run the dry run again. `in sync: nothing to change` is the pass. A failure part way through says how many changes landed. Fix the cause and run it again, because every step compares before it writes.
 
 ---
 

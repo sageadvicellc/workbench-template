@@ -8,7 +8,11 @@ fire. This script is the brake that works on any billing. Each pass it:
 1. Pauses an agent that reached its `runsPerDay` cap for the current UTC day.
 2. Pauses every agent after a burst of `OAuth session expired` failures in the
    last 15 minutes, so a dead login does not strand a queue of runs.
-3. Parks work that no person asked for. The first time it sees an issue that
+3. Holds the approval gate. If an agent assigned an open issue to an agent,
+   the issue goes back to the board in `in_review` and the assigning agent is
+   paused. Paperclip lets every active agent assign tasks, whatever its
+   `canAssignTasks` flag says, so this check is the gate's only enforcement.
+4. Parks work that no person asked for. The first time it sees an issue that
    no person created and no routine created, it moves the issue to
    `backlog`, clears the assignee, and adds the `scope-creep` label. An issue
    is judged once. If the owner later approves it, the watchdog leaves it alone.
@@ -42,6 +46,7 @@ from paperclip_lib import (  # noqa: E402
 
 AUTH_WINDOW = timedelta(minutes=15)
 CLOSED = {"done", "cancelled"}
+GATED = {"todo", "in_progress", "blocked"}
 SCOPE_CREEP = "scope-creep"
 
 
@@ -132,10 +137,59 @@ def _park(issues, seen, label_id):
     return actions, judged
 
 
-def decide(cfg, runs, issues, live_agents, seen, label_id, now):
+def gate_candidates(issues):
+    """Open issues an agent holds. Only these need their assignment history read."""
+    return [i for i in issues if i.get("assigneeAgentId") and i.get("status") in GATED]
+
+
+def _gate(cfg, issues, activity, live_agents):
+    """Send back each open issue whose current agent assignment an agent made.
+
+    `activity` maps an issue id to its events, newest first, as
+    `GET /api/issues/{id}/activity` returns them.
+    """
+    board = cfg.get("watchdog", {}).get("boardUserId", "local-board")
+    names = {a["id"]: a.get("name", a["id"]) for a in live_agents}
+    status = {a["id"]: a.get("status") for a in live_agents}
+    actions, pausing = [], []
+    for issue in gate_candidates(issues):
+        iid, holder = issue["id"], issue["assigneeAgentId"]
+        assigned = next(
+            (e for e in activity.get(iid, [])
+             if ((e.get("details") or {}).get("changes") or {}).get("assigneeAgentId", {}).get("to") == holder),
+            None,
+        )
+        if not assigned or assigned.get("actorType") != "agent":
+            continue
+        actor = assigned.get("actorId")
+        name = issue.get("identifier") or iid
+        actions.append(Action("PATCH", f"/api/issues/{iid}", {
+            "status": "in_review", "assigneeAgentId": None, "assigneeUserId": board,
+            "comment": f"Watchdog: {names.get(actor, actor)} assigned this to {names.get(holder, holder)} "
+                       "without board approval. Sent back for your decision.",
+        }, f"send {name} back: {names.get(actor, actor)} assigned it to {names.get(holder, holder)}", ref=iid))
+        if actor in names and status.get(actor) != "paused" and actor not in pausing:
+            pausing.append(actor)
+            actions.append(Action("POST", f"/api/agents/{actor}/pause", None,
+                                  f"pause {names[actor]}: assigned {name} without approval"))
+    return actions
+
+
+def decide(cfg, runs, issues, live_agents, seen, label_id, now, activity=None):
     warnings = []
     actions = _pauses(cfg, runs, live_agents, now, warnings)
+    gated = _gate(cfg, issues, activity or {}, live_agents)
+    already = {a.path for a in actions}
+    actions += [a for a in gated if a.path not in already]
     parked, judged = _park(issues, seen, label_id)
+    # One PATCH per issue. An issue both gated and parked is parked, because
+    # backlog with no assignee also holds the gate, and it keeps the gate's note.
+    gate_notes = {a.ref: a.body["comment"] for a in actions if a.ref and a.method == "PATCH"}
+    for a in parked:
+        if a.ref in gate_notes:
+            a.body = {**a.body, "comment": gate_notes[a.ref]}
+    parked_refs = {a.ref for a in parked}
+    actions = [a for a in actions if not (a.method == "PATCH" and a.ref in parked_refs)]
     return Decision(actions + parked, set(seen) | judged, warnings)
 
 
@@ -209,14 +263,17 @@ def main(argv=None):
         seen, state_warning = _load_seen(args.state)
         if state_warning:
             lines.append(f"{stamp} warning: {state_warning}")
+        issues = client.get(f"/api/companies/{cid}/issues")
+        activity = {i["id"]: client.get(f"/api/issues/{i['id']}/activity") for i in gate_candidates(issues)}
         decision = decide(
             cfg,
             client.get(f"/api/companies/{cid}/heartbeat-runs"),
-            client.get(f"/api/companies/{cid}/issues"),
+            issues,
             client.get(f"/api/companies/{cid}/agents"),
             seen,
             labels[SCOPE_CREEP],
             now,
+            activity,
         )
         done, seen, failed = execute(decision, client, args.dry_run, stamp)
         lines.extend(done)
