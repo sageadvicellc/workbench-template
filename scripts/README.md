@@ -1,6 +1,6 @@
 ---
 type: index
-updated: 2026-09-17
+updated: 2026-09-25
 ---
 
 # scripts
@@ -27,6 +27,9 @@ project's repo. Everything else is here.
 | `open-items-files.txt` | Data, not a script. The context files `check-open-items.py` reads by default | Read by `check-open-items.py` |
 | `sync-harness.py` | Generates, per adapter manifest, the MCP tables a harness reads in its own format, from `.mcp.json` | The workbench root: `python3 scripts/sync-harness.py`, or `--check` to report and write nothing |
 | `check-harness.py` | Proves the wiring: every declared symlink, every skill reachable through it, every generated file current, no harness named in the neutral core, and the entrypoint under its size cap | The workbench root: `python3 scripts/check-harness.py` |
+| `paperclip-apply.py` | Makes a live Paperclip company match `paperclip/company.json`, the wake prompt, and each agent's `AGENTS.md`. Prints a plan and changes nothing without `--apply`. Unused until `prompts/setup-paperclip.md` runs | The workbench root: `python3 scripts/paperclip-apply.py` |
+| `paperclip-watchdog.py` | Pauses a Paperclip agent at its daily run cap or after a burst of login failures, and parks issues no person or routine created. Calls no model | The workbench root: `python3 scripts/paperclip-watchdog.py --dry-run` |
+| `paperclip_lib.py` | The config loader and HTTP client the two Paperclip scripts share | Imported, not run |
 
 ## check-skills.py
 
