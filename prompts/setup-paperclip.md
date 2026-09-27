@@ -81,58 +81,32 @@ Do not propose an agent per role, a router agent, or an auditor agent. A role ru
 
 ---
 
-## Stage 2: write `paperclip/`
+## Stage 2: fill in `paperclip/`
 
-Write these files at the workbench root. They are the source of truth. The server holds a copy, and `scripts/paperclip-apply.py` makes the copy match.
+The workbench already ships `paperclip/`. It is a scaffold: every file is there, with every identifier a placeholder. Do not write these files from scratch. Fill them in, in the order `paperclip/README.md` gives, and delete each `> FILL:` block as you answer it. Find every unfilled spot with:
 
-**1. `paperclip/company.json`.** Fill every value from stages 0 and 1. The chief of staff keeps the onboarding agent's id. A new lead has `"id": null` until the apply creates it.
-
-```json
-{
-  "companyId": "<company id>",
-  "apiBase": "<address>",
-  "company": { "requireBoardApprovalForNewAgents": true },
-  "experimental": {
-    "enableIssueGraphLivenessAutoRecovery": false,
-    "enableTaskWatchdogs": false,
-    "enableIssuePlanDecompositions": false
-  },
-  "labels": [{ "name": "scope-creep", "color": "#b45309" }],
-  "defaults": {
-    "adapterConfig": { "cwd": "<absolute path of this workbench>", "graceSec": 20 },
-    "adapters": {
-      "<adapter id>": { "model": "<model the owner chose>" }
-    },
-    "runtimeConfig": {
-      "heartbeat": {
-        "enabled": false, "intervalSec": 0, "cooldownSec": 60,
-        "wakeOnDemand": true, "maxConcurrentRuns": 1,
-        "skipTimerWhenNoActionableWork": true
-      }
-    },
-    "permissions": { "canCreateAgents": false, "canCreateSkills": false, "canAssignTasks": false },
-    "wakePromptFile": "paperclip/wake-prompt.md"
-  },
-  "agents": [
-    {
-      "key": "chief", "id": "<onboarding agent id>", "name": "<name>", "role": "pm",
-      "title": "Chief of staff", "adapterType": "<adapter id>",
-      "instructionsFile": "paperclip/agents/chief/AGENTS.md",
-      "adapterConfig": { "maxTurnsPerRun": 60, "timeoutSec": 900 }, "runsPerDay": 8
-    }
-  ],
-  "watchdog": {
-    "authFailureBurst": 3,
-    "authFailurePattern": "<the login-expiry text the owner's runtime writes>",
-    "boardUserId": "<owner's board user id>",
-    "logFile": ".paperclip/watchdog.log"
-  }
-}
+```bash
+grep -rn '^ *> FILL:' --include='*.md' .
 ```
 
-Add one entry to `agents` per lead, with its own key, name, role, adapter, instructions file, and caps. No agent gets the role `ceo`. The owner is the CEO, and a `ceo` agent can change other agents' permissions. The onboarding agent moves from `ceo` to `pm` on apply. The three `experimental` switches turn off server features that create work without a person. If the adapter has a permission-skip switch, set it `false` in that adapter's profile, because some adapters default it to `true`.
+These files are the source of truth. The server holds a copy, and `scripts/paperclip-apply.py` makes the copy match.
 
-**2. `paperclip/wake-prompt.md`.** Write this text, with the two role roots filled in from the installed packs. Keep every line of the run contract.
+**1. `paperclip/company.json`.** Fill every placeholder from stages 0 and 1. The chief of staff keeps the onboarding agent's id. A new lead keeps `"id": null` until the apply creates it.
+
+The scaffold ships two example agents, `chief-of-staff` and `lead`. Copy the `lead` entry once per lead the owner chose, each with its own key, name, role, adapter, instructions file, and caps. Delete the example you do not use.
+
+Leave every safety value where it is:
+
+- `company.requireBoardApprovalForNewAgents` stays `true`.
+- The three `experimental` switches stay `false`. They turn off server features that create work without a person.
+- `defaults.runtimeConfig.heartbeat.enabled` stays `false`.
+- `defaults.permissions.canCreateAgents`, `canCreateSkills`, and `canAssignTasks` stay `false`.
+- `dangerouslySkipPermissions` stays `false` in every adapter profile that has it. Some adapters default it to `true`, which is why the file states it.
+- `defaults.wakePromptFile` stays `paperclip/wake-prompt.md`.
+
+No agent gets the role `ceo`. The owner is the CEO, and a `ceo` agent can change other agents' permissions. The onboarding agent moves from `ceo` to `pm` on apply.
+
+**2. `paperclip/wake-prompt.md`.** Fill in the placeholders and the two role roots from the installed packs. Keep every line of the run contract. This file is sent to the server word for word, so delete its `> FILL:` block once you have answered it. For reference, the contract reads:
 
 ```text
 You are agent {{agent.id}} ({{agent.name}}) at <business name>. <Owner> is the CEO and the only board member. Your AGENTS.md is your whole job.
@@ -156,7 +130,7 @@ Roles and skills are plain files, so they work on any runtime:
 
 To find the owner's board user id, have the owner assign one issue to themselves in the Paperclip UI, then read that issue's `assigneeUserId`. In `local_trusted` mode it is `local-board`. Read it from the issue, and do not assume it.
 
-**3. `paperclip/agents/chief/AGENTS.md`.** Under 500 words. It says:
+**3. `paperclip/agents/chief-of-staff/AGENTS.md`.** Fill in the scaffold. Keep it under 500 words, and keep the `## Voice` block at the end, disclaimer included. It says:
 
 - It turns one ticket into one scope the owner can approve, and it never does the work or hands it to anyone.
 - It reads the workbench root `AGENTS.md`, and its rules bind it.
@@ -166,7 +140,7 @@ To find the owner's board user id, have the owner assign one issue to themselves
 - It hands back with one comment: goal, lead, budget, questions.
 - One scope per ticket, and never a move of a ticket to a lead.
 
-**4. One `paperclip/agents/<lead>/AGENTS.md` per lead.** Under 500 words each. Each says:
+**4. One `paperclip/agents/<lead>/AGENTS.md` per lead.** Copy `paperclip/agents/lead/AGENTS.md` once per lead and fill each in. Under 500 words each, each keeping its `## Voice` block and disclaimer. Each says:
 
 - It delivers one approved scope, running the pack's roles inside this run.
 - It reads the workbench root `AGENTS.md` and the operating procedure of its pack, and both bind it.
@@ -177,14 +151,28 @@ To find the owner's board user id, have the owner assign one issue to themselves
 - A finding outside the scope becomes a scope-creep filing.
 - It stops at the scope's turn budget and says how many more turns it needs.
 
+**5. `paperclip/subagents/builder.md` and `paperclip/subagents/reviewer.md`.** One copy per subagent each lead runs. Fill in the frontmatter: `name`, `lead`, `roles`, `effort`, and a `models` map keyed by `adapterType`. A runtime with no entry in `models` uses its own default model. Keep the `## Voice` block and its disclaimer.
+
+**6. `paperclip/ideas.md`.** Fill it in if the owner wants an idea ledger, which lets a run that woke with no issue develop one idea and propose it as a backlog issue. If they do not, delete the file and the wake prompt's idea bullets together.
+
+**7. `paperclip/souls/`.** Only if an agent runs on Hermes. On any other runtime a soul file is written and unwired, and the agent's voice comes from the `## Voice` block in its `AGENTS.md`. `paperclip/souls/README.md` says so.
+
 Show the owner each file before stage 3.
 
-**5. `.gitignore`.** Add these two lines, so runtime state stays out of commits:
+**8. `.gitignore`.** Add these two lines, so runtime state stays out of commits:
 
 ```text
 .paperclip/*
 !.paperclip/README.md
 ```
+
+### Three cautions
+
+Say each of these to the owner while you fill in the caps, because none of the three is recoverable by an agent afterwards.
+
+- **The heartbeat timer stays off.** The idea ledger's three caps, one move a run, three ideas below `ready`, and one proposal a week, are self-policed. Nothing in the server enforces any of them. A timer would fire idle runs on a schedule and multiply an unenforced cap. Leave `defaults.runtimeConfig.heartbeat.enabled` at `false`.
+- **A run cap of `0` enforces nothing.** Every enforcement site guards on truthiness, so a cap of `0` reads as "no cap configured" and disables the breaker instead of stopping the agent. Never ship `0`, `null`, or an empty cap. Leave the key out to mean uncapped, and write a positive whole number to mean capped. `scripts/paperclip_lib.py` refuses a bad cap at apply time.
+- **A cap-paused agent does not resume on a new UTC day.** The watchdog pauses at the cap and never unpauses. A person resumes the agent in the Paperclip interface, so a cap set too low fleet-wide stops every agent at once and the fleet waits for a person.
 
 ---
 
