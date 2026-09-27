@@ -233,6 +233,38 @@ class SyncHarnessTest(unittest.TestCase):
     def test_rejects_expansion_in_a_local_server(self):
         self._rejects({"s": {"command": "run", "env": {"K": "${HOME}/x"}}}, "'s'", "expansion")
 
+    def test_rejects_expansion_in_a_command_or_args(self):
+        self._rejects({"s": {"command": "${HOME}/run"}}, "'s'", "expansion")
+        self._rejects({"s": {"command": "run", "args": ["${HOME}"]}}, "'s'", "expansion")
+
+    @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
+    def test_a_bare_self_referencing_env_value_becomes_an_env_vars_reference(self):
+        """A literal secret embeds the token in a tracked generated file. A
+        self-referencing "${NAME}" value names the variable instead, so the
+        generated file never holds the value: the target format forwards it
+        from its own environment (env_vars,
+        https://learn.chatgpt.com/docs/extend/mcp, retrieved 2026-09-27)."""
+        self._mcp_tree({"local": {"command": "run", "env": {"TOKEN": "${TOKEN}"}}})
+        text = sync.expected_outputs(self.root)[".x/config.toml"]
+        self.assertNotIn("TOKEN =", text)
+        doc = tomllib.loads(text)
+        self.assertEqual(doc["mcp_servers"]["local"]["env_vars"], ["TOKEN"])
+        self.assertNotIn("env", doc["mcp_servers"]["local"])
+
+    @unittest.skipUnless(tomllib, "tomllib needs Python 3.11")
+    def test_a_mix_of_literal_and_reference_env_values_renders_both(self):
+        self._mcp_tree({"local": {
+            "command": "run", "env": {"MODE": "prod", "TOKEN": "${TOKEN}"}}})
+        doc = tomllib.loads(sync.expected_outputs(self.root)[".x/config.toml"])
+        self.assertEqual(doc["mcp_servers"]["local"]["env_vars"], ["TOKEN"])
+        self.assertEqual(doc["mcp_servers"]["local"]["env"], {"MODE": "prod"})
+
+    def test_rejects_an_env_reference_to_a_differently_named_variable(self):
+        """env_vars forwards a variable under its own name; the source key
+        and the referenced name must match, or the rename has no expression
+        in the target format."""
+        self._rejects({"s": {"command": "run", "env": {"K": "${OTHER}"}}}, "'s'", "K", "OTHER")
+
     def test_rejects_a_header_that_is_not_a_bearer_variable(self):
         self._rejects({"s": {"type": "http", "url": "https://x", "headers": {"X-Key": "abc"}}},
                       "'s'", "bearer_token_env_var")
