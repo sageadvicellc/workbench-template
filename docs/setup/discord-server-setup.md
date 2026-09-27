@@ -43,11 +43,21 @@ the channel and role layout they post into.
 
 3. **Set its permissions.** Do not grant `ADMINISTRATOR`. Grant only what the
    layout needs:
-   - `MANAGE_CHANNELS`, `MANAGE_ROLES`, `MANAGE_WEBHOOKS`, `MANAGE_THREADS`
+   - `MANAGE_CHANNELS`, `MANAGE_ROLES`, `MANAGE_THREADS`
    - `CREATE_PUBLIC_THREADS`, `CREATE_PRIVATE_THREADS`
    - `SEND_MESSAGES`, `SEND_MESSAGES_IN_THREADS`, `EMBED_LINKS`,
      `ADD_REACTIONS`
-   - `VIEW_CHANNEL`, `READ_MESSAGE_HISTORY`, `VIEW_AUDIT_LOG`
+   - `VIEW_CHANNEL`, `READ_MESSAGE_HISTORY`
+
+   Two permissions are absent on purpose, so that a later reader does not add
+   them back:
+
+   - `MANAGE_WEBHOOKS` is absent because no step in any runbook here creates a
+     webhook with this bot, and the permission lets its holder list a channel's
+     webhooks. That listing returns the webhook token, which is the URL
+     `discord-plugin-install.md` says is never written anywhere.
+   - `VIEW_AUDIT_LOG` is absent because the pinned tool sets in step 4 do not
+     use it.
 
    Build the invite URL with the `bot` scope and these permission bits. Open
    it and add the bot to the server.
@@ -75,13 +85,41 @@ the channel and role layout they post into.
    privileged intents and limit the tool set, or the gateway refuses the login
    with `Used disallowed intents`:
 
+   Install the server package to a path of your own first, and launch that
+   path. `npx -y <package>@<version>` resolves and runs registry code at every
+   launch, with a token holding `MANAGE_ROLES` and `MANAGE_CHANNELS` in its
+   environment. The version pin narrows that; it is not an integrity check, and
+   there is no lockfile:
+
+   ```bash
+   mkdir -p ~/.local/discord-mcp && cd ~/.local/discord-mcp
+   npm init -y
+   npm install --save-exact <package>@<version>
+   ```
+
+   `npm install` writes `package-lock.json` beside it, with an `integrity` hash
+   per package. Keep that file. A later `npm ci` in the same directory
+   reinstalls exactly those bytes and fails if the registry serves anything
+   else. Read the installed package's `bin` entry for the launch path below.
+
    ```bash
    claude mcp add --scope local discord \
      -e DISCORD_MESSAGE_CONTENT=false \
      -e DISCORD_GUILD_MEMBERS=false \
      -e DISCORD_MCP_TOOLSETS=discovery,channels,permissions,roles \
-     -- sh -c '. "$HOME/.config/<workbench>/.env"; DISCORD_TOKEN="$DISCORD_BOT_MAINTENANCE" DISCORD_ALLOWED_GUILDS="$DISCORD_ALLOWED_GUILDS" exec npx -y <package>@<version>'
+     -- sh -c '. "$HOME/.config/<workbench>/.env"; DISCORD_TOKEN="$DISCORD_BOT_MAINTENANCE" DISCORD_ALLOWED_GUILDS="$DISCORD_ALLOWED_GUILDS" exec "$HOME/.local/discord-mcp/node_modules/.bin/<binary>"'
    ```
+
+   The quick variant is `exec npx -y <package>@<version>` in place of that
+   path. It needs no install step and it takes the risk named above at every
+   launch.
+
+   **The env file must not use `export`.** Sourcing it with `.` leaves every
+   line an unexported shell variable, so only the `DISCORD_TOKEN` and
+   `DISCORD_ALLOWED_GUILDS` assignments prefixed on the `exec` line reach the
+   child process. That is the whole reason the other tokens stay out of the
+   server's environment. Write one `export` in that file and every token in it
+   reaches this process, silently.
 
    Never write the token to a tracked file or to a Paperclip secret. Do not
    pass a second `discord` server on the command line. A second entry of the

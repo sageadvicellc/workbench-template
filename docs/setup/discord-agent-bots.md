@@ -45,8 +45,24 @@ off, so none of them needs a privileged intent.
 2. **Set each bot.** On each application's Bot page:
    - Set the avatar.
    - Turn off Public Bot, so only you can invite it.
-   - Turn on the Message Content intent on the **system** application only.
-     Leave every privileged intent off on every lead application.
+   - Decide the Message Content intent on the **system** application. Leave
+     every privileged intent off on every lead application.
+
+     Message Content is a privileged intent, and it is narrower than it looks.
+     A button click and a slash command arrive as interactions and need no
+     intent at all. A message that mentions the bot arrives with its content
+     whether the intent is on or not. The intent buys one thing: the text of a
+     free-form reply that does **not** mention the bot.
+
+     So turn it on only if you want to reply without mentioning the bot. If
+     every reply is a thread reply to the bot's own message, or mentions it,
+     leave it off: that is the right call. With it on, the bot reads the
+     content of every message in every channel it can see.
+
+     Check the three rules in the paragraph above against Discord's own
+     gateway intent documentation before you decide. They were written from a
+     review, not from the documentation, and Discord has changed intent
+     behaviour before.
    - Reset the token and copy it into the env file, under the name in step 5.
      Never paste a token into a chat session.
 
@@ -89,36 +105,57 @@ off, so none of them needs a privileged intent.
 
    ```bash
    python3 - <<'PY'
-   import json, os, pathlib, urllib.request
+   import json, os, pathlib, sys, urllib.parse, urllib.request
+
+   LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
    company = os.environ["PAPERCLIP_COMPANY_ID"]
    base = os.environ.get("PAPERCLIP_API_URL", "http://127.0.0.1:3100").rstrip("/")
+   # Every bot token below goes in the body of these requests. Over plain http
+   # to anything but loopback, they cross the network in the clear. This is the
+   # rule scripts/paperclip_lib.py already enforces on its own client.
+   url = urllib.parse.urlparse(base)
+   if url.scheme != "https" and url.hostname not in LOOPBACK:
+       sys.exit(f"refusing to send tokens over plain http to {url.hostname}")
    if not base.endswith("/api"):
        base += "/api"
    env_path = pathlib.Path.home() / ".config" / os.environ["WORKBENCH_NAME"] / ".env"
    names = os.environ["DISCORD_BOT_NAMES"].split()
+   token = os.environ.get("PAPERCLIP_BOARD_API_KEY")
+
+   def unquote(value):
+       # A shell env file may quote a value. `DISCORD_BOT_SYSTEM="tok"` would
+       # otherwise store the quotes and fail later as a Discord auth error.
+       value = value.strip()
+       if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+           return value[1:-1]
+       return value
 
    env = {}
    for line in env_path.read_text().splitlines():
        if "=" in line and not line.lstrip().startswith("#"):
            key, value = line.split("=", 1)
-           env[key.strip()] = value.strip()
+           env[key.strip()] = unquote(value)
 
    def call(method, path, body=None):
+       headers = {"Content-Type": "application/json"}
+       if token:
+           headers["Authorization"] = f"Bearer {token}"
        request = urllib.request.Request(
            base + path,
            method=method,
            data=json.dumps(body).encode() if body is not None else None,
-           headers={"Content-Type": "application/json"},
+           headers=headers,
        )
        with urllib.request.urlopen(request) as response:
            return json.load(response)
 
    existing = {s["key"]: s["id"] for s in call("GET", f"/companies/{company}/secrets")}
+   missing = []
    for name in names:
        value = env.get(f"DISCORD_BOT_{name.upper()}")
        if not value:
-           print(name, "missing from the env file")
+           missing.append(name)
            continue
        key = f"discord-bot-{name.lower()}"
        if key in existing:
@@ -133,12 +170,19 @@ off, so none of them needs a privileged intent.
                "value": value,
            })
            print(name, made["id"], "created")
+   if missing:
+       # A partial sync is not a success. A wrapper reads the exit code.
+       sys.exit("missing from the env file: " + " ".join(missing))
    PY
    ```
 
    Set `PAPERCLIP_COMPANY_ID`, `WORKBENCH_NAME`, and `DISCORD_BOT_NAMES`
    before you run it. `DISCORD_BOT_NAMES` is a space-separated list, one name
    per application, matching the suffixes you used in step 5.
+
+   Set `PAPERCLIP_BOARD_API_KEY` as well when the instance is not in a trusted
+   loopback mode. Without it, an authenticated instance refuses every call
+   above.
 
    The secrets carry no agent binding. An agent reads a secret only through
    `POST /api/agents/me/secrets/{key}/value`, and that route refuses any
@@ -154,8 +198,13 @@ off, so none of them needs a privileged intent.
      -e DISCORD_MESSAGE_CONTENT=false \
      -e DISCORD_GUILD_MEMBERS=false \
      -e DISCORD_MCP_TOOLSETS=discovery,channels,permissions,roles \
-     -- sh -c '. "$HOME/.config/<workbench>/.env"; DISCORD_TOKEN="$DISCORD_BOT_MAINTENANCE" DISCORD_ALLOWED_GUILDS="$DISCORD_ALLOWED_GUILDS" exec npx -y <package>@<version>'
+     -- sh -c '. "$HOME/.config/<workbench>/.env"; DISCORD_TOKEN="$DISCORD_BOT_MAINTENANCE" DISCORD_ALLOWED_GUILDS="$DISCORD_ALLOWED_GUILDS" exec ~/.local/discord-mcp/node_modules/.bin/<binary>'
    ```
+
+   The launch path is the local install from the server runbook's step 4, for
+   the same reason it gives there. The `npx -y <package>@<version>` form is the
+   quick variant and carries the same risk: it resolves and runs registry code
+   at every launch, with a bot token in its environment.
 
 8. **Give each bot its role.** Through the maintenance bot, add each lead bot
    to its lead role. Without the role, the post lock from the server runbook

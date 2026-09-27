@@ -86,7 +86,7 @@ class TallyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "p/a.jsonl", [line("m1", "claude-sonnet-5", out=1_000_000),
                                      line("m1", "claude-sonnet-5", out=1_000_000)])
-            rows, unpriced = uv.tally(Path(tmp), PRICES, since="2026-09-01")
+            rows, unpriced, _ = uv.tally(Path(tmp), PRICES, since="2026-09-01")
         self.assertEqual(len(rows), 1)
         self.assertAlmostEqual(rows[0]["usd"], 10)
         self.assertEqual(unpriced, {})
@@ -95,7 +95,7 @@ class TallyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "p/a.jsonl", [line("m1", "claude-sonnet-5", entrypoint="sdk-ts", out=1_000_000),
                                      line("m2", "claude-sonnet-5", entrypoint="cli", out=2_000_000)])
-            rows, _ = uv.tally(Path(tmp), PRICES, since="2026-09-01")
+            rows, _, _ = uv.tally(Path(tmp), PRICES, since="2026-09-01")
         by = {r["source"]: r["usd"] for r in rows}
         self.assertAlmostEqual(by["fleet"], 10)
         self.assertAlmostEqual(by["interactive"], 20)
@@ -103,19 +103,19 @@ class TallyTests(unittest.TestCase):
     def test_subagent_transcripts_in_subfolders_are_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "p/s1/subagents/agent-1.jsonl", [line("m9", "claude-opus-5-5", out=1_000_000)])
-            rows, _ = uv.tally(Path(tmp), PRICES, since="2026-09-01")
+            rows, _, _ = uv.tally(Path(tmp), PRICES, since="2026-09-01")
         self.assertAlmostEqual(sum(r["usd"] for r in rows), 20)
 
     def test_messages_before_since_are_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "p/a.jsonl", [line("m1", "claude-sonnet-5", ts="2026-08-31T23:59:59Z", out=1_000_000)])
-            rows, _ = uv.tally(Path(tmp), PRICES, since="2026-09-01")
+            rows, _, _ = uv.tally(Path(tmp), PRICES, since="2026-09-01")
         self.assertEqual(rows, [])
 
     def test_a_model_with_no_price_is_reported_not_zeroed(self):
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "p/a.jsonl", [line("m1", "claude-mystery-9", out=500)])
-            rows, unpriced = uv.tally(Path(tmp), PRICES, since="2026-09-01")
+            rows, unpriced, _ = uv.tally(Path(tmp), PRICES, since="2026-09-01")
         self.assertEqual(rows, [])
         self.assertEqual(unpriced, {"claude-mystery-9": 500})
 
@@ -127,27 +127,46 @@ class TallyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "p/a.jsonl", [line("m1", "no-such-model-9", out=1234),
                                      line("m2", "claude-sonnet-5", out=1_000_000)])
-            rows, unpriced = uv.tally(Path(tmp), prices, since="2026-09-01")
+            rows, unpriced, _ = uv.tally(Path(tmp), prices, since="2026-09-01")
         self.assertEqual(unpriced, {"no-such-model-9": 1234})
         self.assertEqual([r["model"] for r in rows], ["claude-sonnet-5"])
         text = uv.report(rows, unpriced, subscription_usd=None)
         self.assertIn("no price for no-such-model-9", text)
         self.assertIn("1,234", text)
 
-    def test_synthetic_and_bad_lines_are_ignored(self):
+    def test_synthetic_and_bad_lines_are_ignored_and_the_bad_line_is_counted(self):
+        """A synthetic model is filtered, not skipped: the reader loses nothing.
+        A line that is not JSON is data this script could not read, so it is
+        counted and reported."""
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "p/a.jsonl", ["not json", json.dumps({"type": "user"}),
                                      line("m1", "<synthetic>", out=0)])
-            rows, unpriced = uv.tally(Path(tmp), PRICES, since="2026-09-01")
+            rows, unpriced, skipped = uv.tally(Path(tmp), PRICES, since="2026-09-01")
         self.assertEqual((rows, unpriced), ([], {}))
+        self.assertEqual(skipped, {"lines": 1})
 
     def test_an_empty_root_reads_nothing_and_raises_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(uv.tally(Path(tmp), PRICES, since="2026-09-01"), ([], {}))
+            self.assertEqual(uv.tally(Path(tmp), PRICES, since="2026-09-01"), ([], {}, {}))
 
-    def test_a_root_that_does_not_exist_reads_nothing(self):
-        rows, unpriced = uv.tally(Path("/nonexistent/transcripts"), PRICES, since="2026-09-01")
+    def test_a_root_that_does_not_exist_is_counted_not_silent(self):
+        """A mistyped `--root` used to read as a month with no usage. It now
+        counts as a skipped root, so the report says the total is not real."""
+        rows, unpriced, skipped = uv.tally(Path("/nonexistent/transcripts"), PRICES, since="2026-09-01")
         self.assertEqual((rows, unpriced), ([], {}))
+        self.assertEqual(skipped, {"roots": 1})
+
+    def test_a_transcript_that_cannot_be_read_is_counted_not_dropped(self):
+        """A directory named `*.jsonl` stands in for any unreadable file: a
+        permission error raises the same `OSError`. The priced message beside
+        it still counts, and the unreadable one is named."""
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "p").mkdir()
+            (Path(tmp) / "p" / "broken.jsonl").mkdir()
+            write(tmp, "p/a.jsonl", [line("m1", "claude-sonnet-5", out=1_000_000)])
+            rows, unpriced, skipped = uv.tally(Path(tmp), PRICES, since="2026-09-01")
+        self.assertAlmostEqual(rows[0]["usd"], 10)
+        self.assertEqual(skipped, {"files": 1})
 
 
 class SelfHostedTests(unittest.TestCase):
@@ -156,7 +175,7 @@ class SelfHostedTests(unittest.TestCase):
     def test_a_local_model_is_priced_at_its_substitute_as_savings(self):
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "p/a.jsonl", [line("m1", "qwen3.5:9b", out=1_000_000)])
-            rows, unpriced = uv.tally(Path(tmp), self.PRICES, since="2026-09-01")
+            rows, unpriced, _ = uv.tally(Path(tmp), self.PRICES, since="2026-09-01")
         self.assertEqual([(r["source"], r["model"]) for r in rows], [("self-hosted", "qwen3.5:9b")])
         self.assertAlmostEqual(rows[0]["usd"], 10)
         self.assertEqual(unpriced, {})
@@ -207,6 +226,22 @@ class ReportTests(unittest.TestCase):
         self.assertIn("total: $0.00", text)
         self.assertIn("no usage read yet", text)
 
+    def test_the_report_names_every_skipped_file_and_line(self):
+        """A gap in the data is reported the way an unpriced model is. A total
+        read from a partial read is not a total, and the reader is told so."""
+        text = uv.report([], {}, subscription_usd=None, skipped={"files": 2, "lines": 7})
+        self.assertIn("2 transcript files could not be read", text)
+        self.assertIn("7 lines were not JSON", text)
+
+    def test_the_report_names_a_root_it_could_not_read(self):
+        text = uv.report([], {}, subscription_usd=None, skipped={"roots": 1})
+        self.assertIn("could not be read", text)
+
+    def test_a_report_with_no_gap_says_nothing_about_skipping(self):
+        text = uv.report([], {}, subscription_usd=None, skipped={})
+        self.assertNotIn("skipped", text)
+        self.assertNotIn("could not be read", text)
+
 
 class CliTests(unittest.TestCase):
     """`--root` has no default, because a default would name one harness's
@@ -238,6 +273,25 @@ class CliTests(unittest.TestCase):
         self.assertTrue(data["prices"].startswith("https://"))
         self.assertRegex(data["retrieved"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertEqual(data["rows"], [])
+        self.assertEqual(data["skipped"], {})
+
+    def test_json_output_carries_the_skipped_counts(self):
+        """The JSON is what an agent reads. A gap it cannot see is a gap it
+        reports as a figure."""
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            uv.main(["--root", "/nonexistent/transcripts", "--since", "2026-09-01", "--json"])
+        self.assertEqual(json.loads(out.getvalue())["skipped"], {"roots": 1})
+
+    def test_a_text_run_over_an_unreadable_root_says_so(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            uv.main(["--root", "/nonexistent/transcripts", "--since", "2026-09-01"])
+        self.assertIn("could not be read", out.getvalue())
 
 
 if __name__ == "__main__":

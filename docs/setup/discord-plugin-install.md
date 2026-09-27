@@ -91,12 +91,22 @@ it.
 
 1. In the Discord client, create a channel webhook on the review channel and
    copy its URL.
-2. Save it as the only line of a file outside this tree, mode 600:
+2. Save it as the only line of a file outside this tree, mode 600. A webhook
+   URL is a bearer credential: anyone holding it can post to that channel. So
+   do not type it on the command line, where it lands in shell history, and do
+   not create the file at the default mode and restrict it afterwards. Paste it
+   at the prompt instead. It is not echoed, and the file is owner-only from the
+   moment it exists:
 
    ```bash
    mkdir -p ~/.config/<workbench>
-   printf '%s\n' '<the webhook URL>' > ~/.config/<workbench>/review-webhook
-   chmod 600 ~/.config/<workbench>/review-webhook
+   (umask 077; read -rs url; printf '%s\n' "$url" > ~/.config/<workbench>/review-webhook)
+   ```
+
+   Press return after you paste. Then check the mode:
+
+   ```bash
+   ls -l ~/.config/<workbench>/review-webhook
    ```
 
 3. Name the file, and nothing else, in the one lead instruction file that is

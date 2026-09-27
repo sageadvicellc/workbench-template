@@ -10,6 +10,13 @@ manual step until nothing is left. Every step is safe to run twice.
     ./bootstrap.sh --check      # check only; change nothing
     ./bootstrap.sh --json       # the same report as JSON, for an agent
     ./bootstrap.sh --only node,repos
+    ./bootstrap.sh --yes        # do not ask before running the settings commands
+
+A run that fixes something executes commands that `bootstrap.settings.json`
+supplies. Before the first of them, it prints every one of those argument
+vectors and asks for a yes. Answer no and nothing runs. `--yes` answers yes
+without asking, for an unattended run; asking is the default, because a reader
+who cloned a derived workbench has not read that file.
 
 Every value particular to one practice comes from `bootstrap.settings.json` at
 the workbench root, never from this file. A setting still holding an
@@ -32,6 +39,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -48,6 +56,42 @@ NEW_ORG = "paperclip-new-org.py"
 LABEL_PREFIX = "launchd_label_prefix"
 PLACEHOLDER = re.compile(r"<[^<>]*>")
 PASSING = ("ok", "fixed", "skipped")
+# A launchd label is joined into a file path, so it may hold only the characters
+# a reverse-DNS label needs. Anything else, `/` and `..` above all, could put the
+# plist outside `~/Library/LaunchAgents`.
+LABEL = re.compile(r"[A-Za-z0-9._-]+")
+# A generated plist is written owner-only. No credential is in a template today,
+# and that is the reason to set the mode before one is.
+PLIST_MODE = 0o600
+
+
+class BootstrapError(Exception):
+    """A value from `bootstrap.settings.json` this script refuses to use."""
+
+
+def check_label(label):
+    """A launchd label, or a raise naming why it is not one."""
+    text = str(label)
+    if not LABEL.fullmatch(text):
+        raise BootstrapError(
+            f"launchd label {text!r} is not a label: only letters, digits, a dot, an underscore, "
+            "and a hyphen are allowed, because the label becomes a file name under "
+            "~/Library/LaunchAgents")
+    return text
+
+
+def http_url(url):
+    """A URL this script may fetch, or a raise naming the scheme it refused.
+
+    `urlopen` honours `file://` and `ftp://`, and `paperclip.api` is a settings
+    value, so the scheme is checked before anything is opened.
+    """
+    text = str(url)
+    scheme = urllib.parse.urlparse(text).scheme
+    if scheme not in ("http", "https"):
+        raise BootstrapError(f"refusing to fetch {text}: only http and https are allowed, not "
+                             f"{scheme or 'a URL with no scheme'}")
+    return text
 
 
 # --- settings -----------------------------------------------------------------
@@ -148,7 +192,7 @@ class Runner:
         return Path(path).exists()
 
     def get_json(self, url):
-        with urllib.request.urlopen(url, timeout=5) as resp:
+        with urllib.request.urlopen(http_url(url), timeout=5) as resp:
             return json.loads(resp.read())
 
 
@@ -159,6 +203,9 @@ class Context:
     runner: Runner
     fix: bool
     settings: Settings = field(default_factory=Settings)
+    assume_yes: bool = False          # skip the settings-commands prompt
+    ask: object = None                # how to read the answer; `input` by default
+    approval: bool | None = None      # the answer, once, for the whole run
 
     @property
     def api(self):
@@ -180,6 +227,7 @@ class Cmd:
 class Write:
     path: Path
     text: str
+    mode: int | None = None          # the file mode to create at, or the umask's
 
     def show(self):
         return f"write {self.path}"
@@ -258,8 +306,9 @@ def _module(name, file):
 
 
 def _launch_agent(ctx, label, text):
-    plist = ctx.home / "Library" / "LaunchAgents" / f"{label}.plist"
-    return [Write(plist, text), Cmd(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)])]
+    plist = ctx.home / "Library" / "LaunchAgents" / f"{check_label(label)}.plist"
+    return [Write(plist, text, mode=PLIST_MODE),
+            Cmd(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)])]
 
 
 def live_configs(ctx):
@@ -524,13 +573,90 @@ STEPS = [
 
 # --- running and reporting ------------------------------------------------------
 
+def settings_argv(config):
+    """Every argument vector `bootstrap.settings.json` supplies to this run.
+
+    These are whole commands, read from a file, that this script executes. No
+    shell is involved, so this is not an injection path. The exposure is plainer
+    than that: a reader clones a derived workbench, runs one command, and it
+    executes configuration they have not read. So a run prints them first.
+    """
+    out = []
+    for tool in config.get("cli_tools") or []:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("install"):
+            out.append([str(a) for a in tool["install"]])
+        for after in tool.get("after") or []:
+            out.append([str(a) for a in after])
+    command = str(config.get("agent_cli.command") or "")
+    packs = config.get("packs") or {}
+    for key in ("marketplace_add_args", "install_args"):
+        if packs.get(key):
+            out.append([command, *[str(a) for a in packs[key]]])
+    for repo in config.get("repos") or []:
+        if isinstance(repo, dict) and repo.get("remote"):
+            out.append(["gh", "repo", "clone", str(repo["remote"])])
+    return out
+
+
+def _write(action):
+    """One `Write`, at its mode. Returns an error text, or None.
+
+    A `Cmd` that fails returns an error string, which `_run_one` turns into a
+    failed step. A `Write` returns the same kind of string, so an unwritable
+    parent or a full disk fails one step instead of the whole run.
+    """
+    try:
+        action.path.parent.mkdir(parents=True, exist_ok=True)
+        if action.mode is None:
+            action.path.write_text(action.text)
+        else:
+            handle = os.open(action.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, action.mode)
+            with os.fdopen(handle, "w") as out:
+                out.write(action.text)
+            # An existing file keeps its old mode through `os.open`, so set it.
+            os.chmod(action.path, action.mode)
+    except OSError as err:
+        return f"`{action.show()}` failed: {err}"
+    return None
+
+
+def _approve(ctx, pending):
+    """Ask once per run, before the first command runs. True to go on.
+
+    `--yes` answers yes without asking, for an unattended run. A closed stdin
+    reads as no, so an unattended run with no `--yes` stops rather than hangs.
+    """
+    if ctx.approval is not None:
+        return ctx.approval
+    if ctx.assume_yes:
+        ctx.approval = True
+        return True
+    print(f"This run executes commands. These come from {SETTINGS_NAME}, not from this script:")
+    for argv in settings_argv(ctx.settings) or [["(none)"]]:
+        print("  " + shlex.join(argv))
+    print("About to run:")
+    for action in pending:
+        print("  " + action.show())
+    try:
+        answer = (ctx.ask or input)("Run them? [y/N] ")
+    except EOFError:
+        answer = ""
+    ctx.approval = str(answer).strip().lower() in ("y", "yes")
+    return ctx.approval
+
+
 def _apply(ctx, actions):
     """Run each fix action in order. Returns an error text, or None."""
     for action in actions:
         if isinstance(action, Write):
-            action.path.parent.mkdir(parents=True, exist_ok=True)
-            action.path.write_text(action.text)
+            error = _write(action)
+            if error:
+                return error
             continue
+        if not _approve(ctx, [a for a in actions if isinstance(a, Cmd)]):
+            return f"the commands from {SETTINGS_NAME} were not approved; nothing ran"
         rc, out = ctx.runner.run(action.argv, cwd=action.cwd)
         if rc != 0 and not action.allow_fail:
             return f"`{action.show()}` failed ({rc}): {out.strip()[:300]}"
@@ -628,6 +754,9 @@ def main(argv=None, ctx=None):
     parser.add_argument("--check", action="store_true", help="check only; change nothing")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     parser.add_argument("--only", help="comma-separated step ids: " + ", ".join(s.id for s in STEPS))
+    parser.add_argument("--yes", action="store_true",
+                        help=f"run the commands from {SETTINGS_NAME} without asking first, for an "
+                             "unattended run")
     args = parser.parse_args(argv)
     only = set(args.only.split(",")) if args.only else None
     unknown = (only or set()) - {s.id for s in STEPS}
@@ -635,9 +764,10 @@ def main(argv=None, ctx=None):
         parser.error(f"unknown step: {', '.join(sorted(unknown))}")
     if ctx is None:
         ctx = Context(repo=REPO, home=Path.home(), runner=Runner(), fix=not args.check,
-                      settings=Settings.load())
+                      settings=Settings.load(), assume_yes=args.yes)
     else:
         ctx.fix = not args.check
+        ctx.assume_yes = args.yes
     placeholders = ctx.settings.placeholders()
     results = run_steps(ctx, only)
     print(report_json(results, placeholders) if args.json else report_text(results, placeholders))

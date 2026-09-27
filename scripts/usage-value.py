@@ -21,6 +21,11 @@ A source is `fleet` when a transcript line's `entrypoint` is one of
 `FLEET_ENTRYPOINTS`, the software development kit entry points an agent runtime
 uses, and `interactive` otherwise. A message logged more than once counts once.
 A model with no price is listed with its output tokens, never priced at zero.
+
+Anything this script could not read is counted and reported, in the text and in
+the JSON, under `skipped`: `roots` for a root that is not a readable directory,
+`files` for a transcript that raised on read, and `lines` for a line that is not
+JSON. A total read from a partial read is not a total, so the gap is named.
 Reads files only; changes nothing.
 """
 
@@ -73,19 +78,31 @@ def cost(usage, row):
             + (w1 or 0) * row.get("cacheWrite1h", 0)) / MTOK
 
 
-def _messages(root):
+def _messages(root, skipped):
+    """Each assistant message under `root`, counting what could not be read.
+
+    `skipped` is a counter this fills in as it goes, so a gap in the data
+    reaches the report instead of vanishing. Its keys are `roots` for a root
+    that is not a readable directory, `files` for a transcript that raised on
+    read, and `lines` for a line that is not JSON.
+    """
     root = Path(root)
     if not root.is_dir():
+        skipped["roots"] += 1
         return
     for path in sorted(root.rglob("*.jsonl")):
         try:
             text = path.read_text(errors="replace")
         except OSError:
+            skipped["files"] += 1
             continue
         for raw in text.splitlines():
+            if not raw.strip():
+                continue
             try:
                 entry = json.loads(raw)
             except ValueError:
+                skipped["lines"] += 1
                 continue
             msg = entry.get("message") if isinstance(entry, dict) else None
             if entry.get("type") == "assistant" and isinstance(msg, dict) and msg.get("usage"):
@@ -94,11 +111,17 @@ def _messages(root):
 
 def tally(root, prices, since):
     """Rows of {date, source, model, usd, input, output, cacheRead, cacheWrite},
-    and unpriced output by model."""
+    unpriced output by model, and what could not be read.
+
+    The third value is the gap. An unreadable root, an unreadable transcript,
+    and a line that is not JSON each leave the total short, so each is counted
+    and reported rather than dropped.
+    """
     seen = set()
     sums = collections.defaultdict(collections.Counter)
     unpriced = collections.Counter()
-    for entry, msg in _messages(root):
+    skipped = collections.Counter()
+    for entry, msg in _messages(root, skipped):
         day = (entry.get("timestamp") or "")[:10]
         model = msg.get("model") or ""
         if day < since or model.startswith("<"):
@@ -126,10 +149,10 @@ def tally(root, prices, since):
         s["cacheRead"] += usage.get("cache_read_input_tokens") or 0
         s["cacheWrite"] += usage.get("cache_creation_input_tokens") or 0
     rows = [{"date": d, "source": src, "model": m, **dict(s)} for (d, src, m), s in sorted(sums.items())]
-    return rows, dict(unpriced)
+    return rows, dict(unpriced), dict(skipped)
 
 
-def report(rows, unpriced, subscription_usd=None, plans=None):
+def report(rows, unpriced, subscription_usd=None, plans=None, skipped=None):
     lines = ["| Date | Source | Model | Output tokens | API-equivalent USD |", "|---|---|---|---|---|"]
     for r in rows:
         lines.append(f"| {r['date']} | {r['source']} | {r['model']} | {r['output']:,} | {r['usd']:.2f} |")
@@ -159,7 +182,27 @@ def report(rows, unpriced, subscription_usd=None, plans=None):
         lines.append(f"self-hosted savings: ${savings:,.2f}")
     for model, out in sorted(unpriced.items()):
         lines.append(f"no price for {model}: {out:,} output tokens left out of the total")
+    lines += gap_lines(skipped or {})
     return "\n".join(lines)
+
+
+def gap_lines(skipped):
+    """One line per kind of data this run could not read, or none.
+
+    An unpriced model already tells a reader the total is short. These say the
+    same thing for data that never parsed, so a permission error or a corrupt
+    transcript is a finding rather than a quieter number.
+    """
+    lines = []
+    if skipped.get("roots"):
+        lines.append("the transcript root could not be read, so nothing under it was counted")
+    if skipped.get("files"):
+        n = skipped["files"]
+        lines.append(f"{n:,} transcript files could not be read: the total is short by whatever they hold")
+    if skipped.get("lines"):
+        n = skipped["lines"]
+        lines.append(f"{n:,} lines were not JSON and were left out of the total")
+    return lines
 
 
 def main(argv=None):
@@ -173,14 +216,15 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     prices = json.loads(Path(args.prices).read_text())
-    rows, unpriced = tally(Path(args.root), prices, args.since)
+    rows, unpriced, skipped = tally(Path(args.root), prices, args.since)
     if args.json:
         print(json.dumps({"since": args.since, "prices": prices["source"], "retrieved": prices["retrieved"],
-                          "plans": prices.get("plans") or {}, "rows": rows, "unpriced": unpriced}, indent=2))
+                          "plans": prices.get("plans") or {}, "rows": rows, "unpriced": unpriced,
+                          "skipped": skipped}, indent=2))
     else:
         print(f"API-equivalent value since {args.since}, list prices from {prices['source']} "
               f"(retrieved {prices['retrieved']})\n")
-        print(report(rows, unpriced, args.subscription_usd, plans=prices.get("plans")))
+        print(report(rows, unpriced, args.subscription_usd, plans=prices.get("plans"), skipped=skipped))
     return 0
 
 

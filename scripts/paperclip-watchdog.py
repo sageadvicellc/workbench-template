@@ -1086,20 +1086,55 @@ def _save_seen(path, seen):
     _save_state(path, seen, swaps)
 
 
+# The log holds issue titles, agent names, and pause reasons. None of that is
+# for every account on the machine to read, so the file is owner-only.
+LOG_MODE = 0o600
+
+
 def _log(log_path, lines):
     if not lines:
         return
+    log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a") as log:
+    handle = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, LOG_MODE)
+    with os.fdopen(handle, "a") as log:
         log.write("\n".join(lines) + "\n")
+    # A file that already existed keeps its old mode through `os.open`.
+    os.chmod(log_path, LOG_MODE)
+
+
+def _under_repo(value, key):
+    """A config-supplied path, joined onto the repository root and kept there.
+
+    `watchdog.stateFile` and `watchdog.logFile` come from a config file. Joined
+    without a check, a `../` or an absolute path in either writes outside the
+    checkout, which is not what a per-company file is for.
+    """
+    joined = REPO_ROOT / str(value)
+    resolved = joined.resolve()
+    root = REPO_ROOT.resolve()
+    if resolved == root or root not in resolved.parents:
+        raise PaperclipError(f"watchdog.{key} must name a path under the repository root; "
+                             f"{value!r} resolves to {resolved}")
+    return joined
 
 
 def state_path(cfg, flag):
     """The seen-issues file: `--state` if given, else the config's
-    `watchdog.stateFile`, so a second company keeps its own."""
+    `watchdog.stateFile`, so a second company keeps its own.
+
+    `--state` is a person's own argument on the command line and is taken as
+    given. The config value is constrained to this checkout.
+    """
     if flag:
         return Path(flag)
-    return REPO_ROOT / cfg.get("watchdog", {}).get("stateFile", ".paperclip/watchdog-state.json")
+    return _under_repo(cfg.get("watchdog", {}).get("stateFile", ".paperclip/watchdog-state.json"),
+                       "stateFile")
+
+
+def log_path(cfg):
+    """The log file: the config's `watchdog.logFile`, under this checkout."""
+    return _under_repo(cfg.get("watchdog", {}).get("logFile", ".paperclip/watchdog.log"), "logFile")
 
 
 def main(argv=None):
@@ -1114,12 +1149,12 @@ def main(argv=None):
 
     now = datetime.now(timezone.utc)
     stamp = now.isoformat(timespec="seconds")
-    log_path = REPO_ROOT / ".paperclip" / "watchdog.log"
+    logfile = REPO_ROOT / ".paperclip" / "watchdog.log"
     lines = []
     try:
         cfg = load_config(args.config)
         cid = cfg["companyId"]
-        log_path = REPO_ROOT / cfg.get("watchdog", {}).get("logFile", ".paperclip/watchdog.log")
+        logfile = log_path(cfg)
         client = Client(cfg["apiBase"])
         labels = {lb["name"]: lb["id"] for lb in client.get(f"/api/companies/{cid}/labels")}
         if SCOPE_CREEP not in labels:
@@ -1164,7 +1199,7 @@ def main(argv=None):
     for line in lines:
         print(line, file=sys.stderr if " error: " in line or " failed: " in line else sys.stdout)
     if not args.dry_run:
-        _log(log_path, lines)
+        _log(logfile, lines)
     return code
 
 

@@ -57,8 +57,13 @@ BASE = {
 
 
 def write_pair(tmp, overlay, base=None):
-    root = Path(tmp)
-    (root / "orgs").mkdir()
+    """A base and an overlay in a `paperclip/` directory, the shape on disk.
+
+    The directory name is load-bearing: an `extends` chain may not leave the
+    `paperclip/` directory its config sits in.
+    """
+    root = Path(tmp) / "paperclip"
+    (root / "orgs").mkdir(parents=True)
     (root / "company.json").write_text(json.dumps(base or BASE))
     path = root / "orgs" / "new.json"
     path.write_text(json.dumps(overlay))
@@ -282,13 +287,13 @@ class WatchdogTemplateTests(unittest.TestCase):
         self.assertIn(no.WORKBENCH_MARKER, text)
         home = str(Path.home())
         self.assertNotIn(home, text)
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped.startswith("<string>"):
-                continue
-            value = stripped[len("<string>"):].split("</string>")[0]
-            if value.startswith("/"):
-                self.assertIn(value, ("/usr/bin/python3", "/dev/null"), value)
+        values = [line.strip()[len("<string>"):].split("</string>")[0]
+                  for line in text.splitlines() if line.strip().startswith("<string>")]
+        absolute = [v for v in values if v.startswith("/")]
+        # Assert the loop saw what it expected to see. Without this, an empty
+        # or marker-free template would pass by looping over nothing.
+        self.assertGreaterEqual(len(values), 4, values)
+        self.assertEqual(sorted(set(absolute)), ["/dev/null", "/usr/bin/python3"], absolute)
 
     def test_rendering_puts_this_checkout_and_the_settings_prefix_in(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -366,6 +371,55 @@ class GoalTests(unittest.TestCase):
         self.assertIsNone(action.body["ownerAgentId"])
 
 
+class ExtendsBoundaryTests(unittest.TestCase):
+    """`extends` is a relative path from a config file. It is resolved, so it
+    could otherwise reach any file on the machine, and a config that extends
+    itself would recurse until Python gave up."""
+
+    def test_a_base_outside_the_paperclip_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "outside.json").write_text(json.dumps(BASE))
+            path = write_pair(tmp, {"extends": "../../outside.json"})
+            with self.assertRaises(lib.PaperclipError) as err:
+                lib.load_config(path)
+        self.assertIn("paperclip/", str(err.exception))
+
+    def test_an_absolute_base_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_pair(tmp, {"extends": "/etc/passwd"})
+            with self.assertRaises(lib.PaperclipError):
+                lib.load_config(path)
+
+    def test_a_config_under_no_paperclip_directory_cannot_extend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "base.json").write_text(json.dumps(BASE))
+            path = Path(tmp) / "over.json"
+            path.write_text(json.dumps({"extends": "base.json"}))
+            with self.assertRaises(lib.PaperclipError) as err:
+                lib.load_config(path)
+        self.assertIn("paperclip/", str(err.exception))
+
+    def test_a_config_that_extends_itself_is_a_named_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_pair(tmp, {"extends": "new.json"})
+            with self.assertRaises(lib.PaperclipError) as err:
+                lib.load_config(path)
+        self.assertIn("loop", str(err.exception))
+
+    def test_a_two_file_loop_is_a_named_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_pair(tmp, {"extends": "../company.json"},
+                              base={**BASE, "extends": "orgs/new.json"})
+            with self.assertRaises(lib.PaperclipError) as err:
+                lib.load_config(path)
+        self.assertIn("loop", str(err.exception))
+
+    def test_a_base_beside_the_overlay_in_the_same_tree_still_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = lib.load_config(write_pair(tmp, {"extends": "../company.json", "companyId": "new-co"}))
+        self.assertEqual(cfg["companyId"], "new-co")
+
+
 class WatchdogStateTests(unittest.TestCase):
     def test_flag_wins(self):
         self.assertEqual(wd.state_path({"watchdog": {"stateFile": "x.json"}}, "/tmp/s.json"), Path("/tmp/s.json"))
@@ -376,6 +430,40 @@ class WatchdogStateTests(unittest.TestCase):
 
     def test_default_state_file_is_unchanged(self):
         self.assertEqual(wd.state_path({}, None), wd.REPO_ROOT / ".paperclip" / "watchdog-state.json")
+
+    def test_a_state_file_that_leaves_the_repository_is_refused(self):
+        """`stateFile` is joined onto the repository root. A `../` in it would
+        write outside the checkout."""
+        for bad in ("../outside.json", "/tmp/outside.json", ".paperclip/../../outside.json"):
+            with self.assertRaises(lib.PaperclipError, msg=bad):
+                wd.state_path({"watchdog": {"stateFile": bad}}, None)
+
+    def test_the_log_file_comes_from_config_and_stays_under_the_repository(self):
+        self.assertEqual(wd.log_path({"watchdog": {"logFile": ".paperclip/w2.log"}}),
+                         wd.REPO_ROOT / ".paperclip" / "w2.log")
+        self.assertEqual(wd.log_path({}), wd.REPO_ROOT / ".paperclip" / "watchdog.log")
+        for bad in ("../outside.log", "/tmp/outside.log"):
+            with self.assertRaises(lib.PaperclipError, msg=bad):
+                wd.log_path({"watchdog": {"logFile": bad}})
+
+    def test_the_log_is_written_owner_only(self):
+        """The log holds issue titles, agent names, and pause reasons. At the
+        default umask it is world-readable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "logs" / "watchdog.log"
+            wd._log(path, ["one line"])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            wd._log(path, ["a second line"])
+            self.assertEqual(path.read_text(), "one line\na second line\n")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_an_already_open_log_is_restricted_on_the_next_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "watchdog.log"
+            path.write_text("old\n")
+            path.chmod(0o644)
+            wd._log(path, ["new"])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
 
 class NewOrgTests(unittest.TestCase):

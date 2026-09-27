@@ -27,6 +27,23 @@ instead of one:
 - The private network's own sign-in, which is the real gate.
 - The hostname allowlist below, which is a check, not a gate.
 
+Three more things are true, and each one is easy to miss:
+
+- **The tailnet access control list is the gate that actually limits reach, and
+  nothing below sets it.** Tailscale's default policy lets every node reach
+  every other node. So every device on the tailnet can reach Paperclip, not
+  just the phone. Tighten that policy to the devices you mean, in the
+  Tailscale admin console, and treat this runbook as incomplete until you
+  have.
+- **A tailnet can admit people you never invited.** A tailnet created with a
+  Google Workspace or a Microsoft account can auto-join every user on that
+  domain. "Just the owner's own devices" may already be false before you start.
+  Read the tailnet's own user list before you accept the trade-off above.
+- **There is no session on the phone.** In `local_trusted` mode the phone gets
+  permanent, unauthenticated control of the board: no login, no logout, and no
+  per-device record of who did what. A lost or unlocked phone is full control
+  of the company, until you take the serve entry down.
+
 Accept this only if the network has just the owner's own devices on it. If it
 is shared, or if a device on it is shared, set a board API key and an `https`
 address instead, and skip this runbook. The Paperclip client refuses to send a
@@ -63,6 +80,9 @@ key over plain `http` to any host but loopback, so the two go together.
    The default port is `3100`. Read the real one from the Paperclip config
    rather than assuming it.
 
+   `--bg` persists across a reboot. The exposure outlives the session that
+   created it, so it stays up until `tailscale serve reset` takes it down.
+
 5. **Check what you published.** Read the list back before you open anything
    on the phone:
 
@@ -78,7 +98,9 @@ key over plain `http` to any host but loopback, so the two go together.
    ```
 
 6. **Open it on the phone.** The address is the machine's name on the private
-   network. Sign in to Paperclip if the mode asks you to.
+   network. In `local_trusted` mode Paperclip asks for no sign-in, so the
+   board opens straight away: that is the trade-off above, not a fault. In an
+   authenticated mode, sign in.
 
 ## Checks
 

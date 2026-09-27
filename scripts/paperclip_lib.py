@@ -43,7 +43,35 @@ class PaperclipError(RuntimeError):
     pass
 
 
-def load_config(path=DEFAULT_CONFIG):
+def _paperclip_dir(path):
+    """The `paperclip/` directory a config sits in, or None."""
+    for parent in Path(path).parents:
+        if parent.name == "paperclip":
+            return parent
+    return None
+
+
+def _base_path(path, base_ref):
+    """The file an `extends` names, constrained to the config's own tree.
+
+    `extends` is a relative path, and a resolved relative path can reach any
+    file on the machine. A base must sit under the same `paperclip/` directory
+    as the config that names it, which is the whole orchestration tree. A
+    config under no `paperclip/` directory has no such boundary, so it may not
+    use `extends` at all.
+    """
+    root = _paperclip_dir(path)
+    if root is None:
+        raise PaperclipError(f"{path.name}: extends is allowed only for a config inside a paperclip/ "
+                             f"directory, and {path} is not in one")
+    base = (path.parent / base_ref).resolve()
+    if base != root and root not in base.parents:
+        raise PaperclipError(f"{path.name}: extends {base_ref!r} resolves to {base}, which is outside "
+                             f"{root}; a base must sit under the same paperclip/ directory")
+    return base
+
+
+def load_config(path=DEFAULT_CONFIG, _seen=None):
     """Read a company config. An overlay names its base with `extends`.
 
     An overlay, such as `paperclip/orgs/<name>.json`, runs the same team as
@@ -60,13 +88,21 @@ def load_config(path=DEFAULT_CONFIG):
     config error: `agentOverrides` is how an overlay changes a base agent, and
     a colliding key would make it ambiguous which one a later override or a run
     cap meant.
+
+    A chain of `extends` is walked once. A config that reaches itself, directly
+    or through another file, is a named error: left alone it recurses until
+    Python raises `RecursionError`, which names nothing.
     """
-    path = Path(path)
+    path = Path(path).resolve()
+    seen = set() if _seen is None else _seen
+    if path in seen:
+        raise PaperclipError(f"{path.name}: extends forms a loop; the chain reaches {path} twice")
+    seen.add(path)
     cfg = json.loads(path.read_text())
     base_ref = cfg.pop("extends", None)
     if base_ref is None:
         return cfg
-    base = load_config((path.parent / base_ref).resolve())
+    base = load_config(_base_path(path, base_ref), seen)
     overrides = cfg.pop("agentOverrides", {})
     extra_agents = cfg.pop("extraAgents", [])
     base_keys = {a["key"] for a in base.get("agents", [])}

@@ -43,17 +43,28 @@ SCANNED_SUFFIXES = {".md", ".json"}
 UUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                   r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 
-# Names from the practice this scaffold was generalised from. A generic
-# template that carries one of them is not generic. Each is matched on a word
-# boundary, so an ordinary word that contains one, such as "usage", passes.
-BANNED_WORDS = [
-    "coda", "emery", "aspen", "darcey", "clay", "quinn", "rowan",
-    "atlas", "atom", "virginia", "pixel", "hanna", "sage",
-]
-BANNED_WORD = re.compile(r"\b(" + "|".join(BANNED_WORDS) + r")\b", re.IGNORECASE)
+# A Discord snowflake: 17 to 20 digits, and every ID Discord has issued since
+# 2015 starts with a 1. A guild, channel, application, or user ID is one.
+SNOWFLAKE = re.compile(r"\b1\d{16,19}\b")
 
-# Substrings that need no boundary: a repository owner, and an outward channel.
-BANNED_SUBSTRINGS = ["sageadvicellc", "hannasage", "discord.com/api/webhooks"]
+# A Discord webhook URL is a bearer credential. It never belongs in a tracked
+# file, whatever else the scrub allows.
+BANNED_SUBSTRINGS = ["discord.com/api/webhooks"]
+
+# A word list each workbench fills in for itself: the agent names, the business
+# name, and the repository owner that must not reach a public repository. The
+# template ships it empty on purpose, because writing those words here would
+# put them in this repository, which is the leak the check exists to stop. One
+# word per line, `#` for a comment. Each is matched on a word boundary, so an
+# ordinary word that contains one, such as "usage", passes.
+SCRUB_WORDS_FILE = Path(__file__).resolve().parent / "scrub-words.txt"
+
+
+def scrub_words():
+    if not SCRUB_WORDS_FILE.is_file():
+        return []
+    return [line.strip() for line in SCRUB_WORDS_FILE.read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")]
 
 DISCLAIMER = ("This block shapes tone only: it grants no channel, it applies if and "
               "when you speak in Discord, and the shared contract still forbids "
@@ -207,8 +218,9 @@ class ConfigLoadsTests(unittest.TestCase):
 
 
 class ScrubTests(unittest.TestCase):
-    """The template is public. Nothing here may carry an identifier or a name
-    from the practice it was generalised from."""
+    """The template is public, and so is any workbench cloned from it that the
+    owner publishes. Nothing here may carry a real identifier, and nothing may
+    carry a word from `scripts/tests/scrub-words.txt`."""
 
     def test_no_file_carries_a_uuid(self):
         for path in scanned_files():
@@ -216,11 +228,29 @@ class ScrubTests(unittest.TestCase):
                 found = UUID.search(path.read_text())
                 self.assertIsNone(found, f"{path.name} carries an identifier: {found and found.group()}")
 
-    def test_no_file_carries_a_banned_name(self):
+    def test_no_file_carries_a_discord_snowflake(self):
         for path in scanned_files():
             with self.subTest(path=path.relative_to(REPO)):
-                found = BANNED_WORD.search(path.read_text())
+                found = SNOWFLAKE.search(path.read_text())
+                self.assertIsNone(found, f"{path.name} carries a Discord ID: {found and found.group()}")
+
+    def test_no_file_carries_a_scrub_word(self):
+        words = scrub_words()
+        if not words:
+            self.skipTest("scrub-words.txt is empty; a derived workbench fills it in")
+        pattern = re.compile(r"\b(" + "|".join(re.escape(w) for w in words) + r")\b",
+                             re.IGNORECASE)
+        for path in scanned_files():
+            with self.subTest(path=path.relative_to(REPO)):
+                found = pattern.search(path.read_text())
                 self.assertIsNone(found, f"{path.name} names {found and found.group()!r}")
+
+    def test_the_scrub_word_list_is_readable_and_ships_empty(self):
+        """The reader must handle comments, blanks, and the shipped empty file.
+        A template that shipped words would be the leak it checks for."""
+        self.assertTrue(SCRUB_WORDS_FILE.is_file(), "scrub-words.txt is missing")
+        self.assertEqual(scrub_words(), [])
+        self.assertIn("#", SCRUB_WORDS_FILE.read_text())
 
     def test_no_file_carries_a_banned_substring(self):
         for path in scanned_files():

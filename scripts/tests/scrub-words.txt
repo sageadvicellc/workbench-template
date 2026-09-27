@@ -1,0 +1,15 @@
+# Words that must not appear in any tracked file under `paperclip/`.
+#
+# The template ships this file empty. Fill it in once you have specialised the
+# workbench, with the words that identify you: each agent's name, the business
+# name, the repository owner, and any product or client name that should not
+# reach a public repository. The scrub test then fails the moment one of them
+# lands in the scaffold.
+#
+# One word per line. A line starting with `#` is a comment, and a blank line is
+# ignored. Each word is matched on a word boundary and without case, so an
+# ordinary word that merely contains one still passes.
+#
+# Leaving this file empty is a real choice, not an oversight: a workbench that
+# is never published needs no scrub. The structural checks beside it, for a
+# UUID, a Discord ID, and a webhook URL, run either way.

@@ -56,6 +56,23 @@ A step whose prerequisite did not pass is `blocked` and is not judged.
     ./bootstrap.sh --check      # check only; change nothing
     ./bootstrap.sh --json       # the same report as JSON, for an agent
     ./bootstrap.sh --only node,repos
+    ./bootstrap.sh --yes        # do not ask before running the settings commands
+
+A fix runs commands that `bootstrap.settings.json` supplies, whole argument
+vectors read from a file. No shell is involved, so this is not an injection
+path. The exposure is plainer: a reader clones a derived workbench, runs one
+command, and it executes configuration they have not read. So before the first
+command of a run, the script prints every one of those vectors and asks for a
+yes. Answer no and nothing runs, and every step that wanted a command reports
+`failed`. `--yes` answers yes without asking, for an unattended run; asking is
+the default. `--check` never asks, because it never runs anything.
+
+A generated launchd plist is written at mode 600, readable only by its owner,
+and its label may hold only letters, digits, a dot, an underscore, and a hyphen.
+The label becomes a file name under `~/Library/LaunchAgents`, so a label with a
+`/` or a `..` in it is refused by name rather than joined into a path. The
+Paperclip API address in `paperclip.api` must be `http` or `https`, because
+`urlopen` honours `file://` and `ftp://` too.
 
 The seven statuses are `ok`, `fixed`, `fixable`, `manual`, `blocked`, `failed`,
 and `skipped`. The exit code is 1 when any step is `manual`, `fixable`,
@@ -209,7 +226,14 @@ up has to know.
 
 Run `paperclip-apply.py --apply` once first: the watchdog needs the
 `scope-creep` label to exist. Each company keeps its own state file and log,
-named in `watchdog.stateFile` and `watchdog.logFile`.
+named in `watchdog.stateFile` and `watchdog.logFile`. Both must name a path
+under this checkout: they are joined onto the repository root, and a `../` or an
+absolute path in either would write outside it. The log is written at mode 600,
+because it holds issue titles, agent names, and pause reasons.
+
+An overlay's `extends` must name a file under the same `paperclip/` directory as
+the overlay itself, and a chain that reaches a file twice is a named error
+rather than a `RecursionError`.
 
 **Three cautions, each learned the hard way.**
 
@@ -260,6 +284,11 @@ priced at the API model it stands in for and reported as money saved, apart from
 the plan total. **A model the prices file does not list is never priced at
 zero:** it is named with its output tokens, so a reader knows the total is
 short.
+
+Anything the run could not read is counted and named the same way, in the text
+and under `skipped` in the JSON: `roots` for a root that is not a readable
+directory, `files` for a transcript that raised on read, and `lines` for a line
+that is not JSON. A mistyped `--root` used to read as a month with no usage.
 
 `paperclip/api-prices.json` holds the figures, with `source`, `retrieved`, and a
 plan price per provider. Every number there was read from the vendor's public

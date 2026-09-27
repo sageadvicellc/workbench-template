@@ -113,9 +113,11 @@ def settings(overrides=None, base=CONFIGURED):
     return bs.Settings(data)
 
 
-def ctx(tmp, runner, fix=False, config=None):
+def ctx(tmp, runner, fix=False, config=None, yes=True):
+    """A context for a test. `yes` skips the settings-commands prompt, which is
+    what every test but `ApprovalTests` wants: no test may read stdin."""
     return bs.Context(repo=Path(tmp), home=Path(tmp) / "home", runner=runner, fix=fix,
-                      settings=config if config is not None else settings())
+                      settings=config if config is not None else settings(), assume_yes=yes)
 
 
 class VersionTests(unittest.TestCase):
@@ -186,6 +188,20 @@ class StatusTests(unittest.TestCase):
             [result] = bs.run_steps(ctx(tmp, runner, fix=True), only={"git-hooks"})
         self.assertEqual(result.status, "failed")
         self.assertIn("could not lock", result.detail)
+
+    def test_failed_when_a_write_cannot_land(self):
+        """A `Write` that raises is the same kind of failure as a command that
+        returns non-zero: one failed step, and every other step still runs. It
+        used to escape and kill the whole run."""
+        with tempfile.TemporaryDirectory() as tmp:
+            template = Path(tmp) / "scripts" / "org.example.refresh.plist.template"
+            template.parent.mkdir(parents=True)
+            template.write_text("<string>/original/workbench/x</string>\n")
+            (Path(tmp) / "home").write_text("a file where the home directory should be")
+            runner = FakeRunner({**HEALTHY, "launchctl list": (0, "-\t0\tsomething.else\n")})
+            results = bs.run_steps(ctx(tmp, runner, fix=True), only={"launch-agents", "always-on"})
+        self.assertEqual([r.status for r in results], ["failed", "ok"])
+        self.assertIn("write ", results[0].detail)
 
     def test_failed_when_a_check_raises(self):
         def boom(_):
@@ -420,6 +436,59 @@ class LaunchAgentTests(unittest.TestCase):
         self.assertEqual(result.status, "skipped")
         self.assertIn("org.example.refresh.plist.template", result.detail)
 
+    def test_a_label_that_leaves_the_launch_agents_directory_is_refused(self):
+        """A label is joined into a path. A label holding `../` would write the
+        plist outside `~/Library/LaunchAgents`, and `launchctl bootstrap` would
+        then run on it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.template(tmp)
+            config = settings({"launch_agents": [
+                {"label": "../../../../tmp/escaped", "template": "scripts/org.example.refresh.plist.template"}]})
+            runner = FakeRunner({**HEALTHY, "launchctl list": (0, "")})
+            [result] = bs.run_steps(ctx(tmp, runner, fix=True, config=config), only={"launch-agents"})
+        self.assertEqual(result.status, "failed")
+        self.assertIn("launchd label", result.detail)
+        self.assertFalse((Path(tmp) / "home" / "Library").exists())
+
+    def test_the_label_rule_accepts_a_reverse_dns_label_and_refuses_the_rest(self):
+        self.assertEqual(bs.check_label("org.example.work_bench-1"), "org.example.work_bench-1")
+        for bad in ("../escaped", "with space", "semi;colon", "", "a/b", "sub/../x"):
+            with self.assertRaises(bs.BootstrapError, msg=bad):
+                bs.check_label(bad)
+
+    def test_a_label_prefix_from_settings_is_checked_too(self):
+        """The prefix is half the watchdog label, and it comes from settings, so
+        it reaches the same path join."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_for_watchdog(tmp)
+            config = settings({"launchd_label_prefix": "../../../../tmp/escaped"})
+            runner = FakeRunner({**HEALTHY, "launchctl list": (0, "")},
+                                http={"http://127.0.0.1:3100/api/companies": [{"id": "new"}]})
+            [result] = bs.run_steps(ctx(tmp, runner, config=config), only={"watchdog"})
+        self.assertEqual(result.status, "failed")
+        self.assertIn("launchd label", result.detail)
+
+    def repo_for_watchdog(self, tmp):
+        root = Path(tmp)
+        (root / "paperclip" / "orgs").mkdir(parents=True)
+        (root / "paperclip" / "company.json").write_text(
+            json.dumps({"companyId": "base", "apiBase": "http://x", "agents": []}))
+        (root / "paperclip" / "orgs" / "second.json").write_text(
+            json.dumps({"extends": "../company.json", "companyId": "new"}))
+        return root
+
+    def test_a_written_launch_agent_is_readable_only_by_its_owner(self):
+        """No credential is in the template today. Mode 600 is set before one
+        is, because a plist under `~/Library/LaunchAgents` is a plausible place
+        for one and the default umask leaves it world-readable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.template(tmp)
+            runner = FakeRunner({**HEALTHY, "launchctl list": (0, ""), "launchctl bootstrap": (0, "")})
+            bs.run_steps(ctx(tmp, runner, fix=True), only={"launch-agents"})
+            plist = Path(tmp) / "home" / "Library" / "LaunchAgents" / "org.example.refresh.plist"
+            self.assertTrue(plist.is_file())
+            self.assertEqual(plist.stat().st_mode & 0o777, 0o600)
+
     def test_an_unconfigured_workbench_path_is_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.template(tmp)
@@ -554,6 +623,130 @@ class PaperclipTests(unittest.TestCase):
         self.assertTrue(any("paperclipai" in c for c in result.commands))
 
 
+class UrlTests(unittest.TestCase):
+    """`paperclip.api` comes from settings, and `urlopen` honours `file://` and
+    `ftp://`. The scheme is checked before anything is opened."""
+
+    def test_http_and_https_pass(self):
+        self.assertEqual(bs.http_url("http://127.0.0.1:3100/api"), "http://127.0.0.1:3100/api")
+        self.assertEqual(bs.http_url("https://example.invalid/api"), "https://example.invalid/api")
+
+    def test_every_other_scheme_is_refused_by_name(self):
+        for bad in ("file:///etc/passwd", "ftp://example.invalid/x", "data:text/plain,x", "/etc/passwd"):
+            with self.assertRaises(bs.BootstrapError, msg=bad):
+                bs.http_url(bad)
+
+    def test_the_runner_refuses_a_file_url_without_opening_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "companies.json"
+            target.write_text('[{"id": "smuggled"}]')
+            with self.assertRaises(bs.BootstrapError):
+                bs.Runner().get_json(f"file://{target}")
+
+
+class ApprovalTests(unittest.TestCase):
+    """`bootstrap.settings.json` supplies whole argument vectors that this
+    script executes. A reader who clones a derived workbench has not read them,
+    so a run prints them and asks once before it runs the first command."""
+
+    def run_with(self, answers, only, tmp, replies, config=None):
+        runner = FakeRunner(answers)
+        context = ctx(tmp, runner, fix=True, yes=False, config=config)
+        asked = []
+
+        def ask(prompt):
+            asked.append(prompt)
+            return replies.pop(0)
+
+        context.ask = ask
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            results = bs.run_steps(context, only=only)
+        return results, runner, asked, out.getvalue()
+
+    def test_the_first_command_prints_every_settings_argv_and_asks(self):
+        answers = {**HEALTHY, "git config --get core.hooksPath": (1, ""), "git config core.hooksPath": (0, "")}
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, asked, out = self.run_with(answers, {"git-hooks"}, tmp, ["y"])
+        self.assertEqual(len(asked), 1)
+        self.assertIn("installer add finder", out)
+        self.assertIn("finder pull", out)
+        self.assertIn("agentcli plugin install", out)
+        self.assertIn("owner-one/repo-one", out)
+        self.assertIn("bootstrap.settings.json", out)
+
+    def test_a_refusal_runs_nothing_and_fails_the_step(self):
+        answers = {**HEALTHY, "git config --get core.hooksPath": (1, "")}
+        with tempfile.TemporaryDirectory() as tmp:
+            results, runner, _, _ = self.run_with(answers, {"git-hooks"}, tmp, ["n"])
+        self.assertEqual(results[0].status, "failed")
+        self.assertIn("not approved", results[0].detail)
+        self.assertNotIn(("git", "config", "core.hooksPath", ".githooks"), runner.calls)
+
+    def test_one_run_asks_once_however_many_steps_have_fixes(self):
+        answers = {**HEALTHY, "git config --get core.hooksPath": (1, ""), "git config core.hooksPath": (0, ""),
+                   "agentcli plugin list": (0, "")}
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, asked, _ = self.run_with(answers, {"git-hooks", "packs"}, tmp, ["y"])
+        self.assertEqual(len(asked), 1)
+
+    def test_a_refusal_holds_for_every_later_step_too(self):
+        answers = {**HEALTHY, "git config --get core.hooksPath": (1, ""), "agentcli plugin list": (0, "")}
+        with tempfile.TemporaryDirectory() as tmp:
+            results, runner, asked, _ = self.run_with(answers, {"git-hooks", "packs"}, tmp, ["n"])
+        self.assertEqual([r.status for r in results], ["failed", "failed"])
+        self.assertEqual(len(asked), 1)
+        self.assertNotIn(("agentcli", "plugin", "install", "pack-one@market-one"), runner.calls)
+
+    def test_a_closed_stdin_reads_as_no(self):
+        """An unattended run with no `--yes` must not hang or crash. It stops."""
+        def ask(_):
+            raise EOFError
+
+        answers = {**HEALTHY, "git config --get core.hooksPath": (1, "")}
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ctx(tmp, FakeRunner(answers), fix=True, yes=False)
+            context.ask = ask
+            with contextlib.redirect_stdout(io.StringIO()):
+                [result] = bs.run_steps(context, only={"git-hooks"})
+        self.assertEqual(result.status, "failed")
+        self.assertIn("not approved", result.detail)
+
+    def test_assume_yes_never_asks(self):
+        def ask(_):
+            raise AssertionError("a run with --yes must not ask")
+
+        answers = {**HEALTHY, "git config --get core.hooksPath": (1, ""), "git config core.hooksPath": (0, "")}
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ctx(tmp, FakeRunner(answers), fix=True, yes=True)
+            context.ask = ask
+            with contextlib.redirect_stdout(io.StringIO()):
+                bs.run_steps(context, only={"git-hooks"})
+
+    def test_check_mode_never_asks_because_it_runs_nothing(self):
+        def ask(_):
+            raise AssertionError("--check must not ask")
+
+        answers = {**HEALTHY, "git config --get core.hooksPath": (1, "")}
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ctx(tmp, FakeRunner(answers), fix=False, yes=False)
+            context.ask = ask
+            with contextlib.redirect_stdout(io.StringIO()):
+                [result] = bs.run_steps(context, only={"git-hooks"})
+        self.assertEqual(result.status, "fixable")
+
+    def test_settings_argv_names_every_vector_settings_supply(self):
+        vectors = [" ".join(v) for v in bs.settings_argv(settings())]
+        self.assertIn("installer add finder", vectors)
+        self.assertIn("finder pull", vectors)
+        self.assertIn("agentcli plugin install {name}", vectors)
+        self.assertIn("agentcli plugin marketplace add {name}", vectors)
+        self.assertIn("gh repo clone owner-one/repo-one", vectors)
+
+    def test_settings_argv_is_empty_when_nothing_is_configured(self):
+        self.assertEqual(bs.settings_argv(bs.Settings({})), [])
+
+
 class OutputTests(unittest.TestCase):
     def test_json_report_is_parseable_and_counts_every_status(self):
         results = [bs.Result("a", "A", "ok", "fine"),
@@ -612,6 +805,14 @@ class MainTests(unittest.TestCase):
             runner = FakeRunner({"xcode-select -p": (2, "")})
             code, _ = self.run_main(["--check", "--only", "xcode-clt"], ctx(tmp, runner))
         self.assertEqual(code, 1)
+
+    def test_the_prompt_is_the_default_and_yes_turns_it_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            context = ctx(tmp, FakeRunner(HEALTHY), yes=False)
+            self.run_main(["--check", "--only", "always-on"], context)
+            self.assertFalse(context.assume_yes)
+            self.run_main(["--check", "--yes", "--only", "always-on"], context)
+            self.assertTrue(context.assume_yes)
 
     def test_check_mode_never_flips_the_context_into_fixing(self):
         with tempfile.TemporaryDirectory() as tmp:
