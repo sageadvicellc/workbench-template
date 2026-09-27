@@ -42,6 +42,10 @@ SETTINGS_NAME = "bootstrap.settings.json"
 SETTINGS_FILE = REPO / SETTINGS_NAME
 API = "http://127.0.0.1:3100"
 NEW_ORG = "paperclip-new-org.py"
+# The reverse-DNS prefix every launchd label here is built from. A prefix names
+# a practice, so it is a setting; an unset or placeholder value leaves the
+# watchdog step `skipped` rather than writing a label built from a placeholder.
+LABEL_PREFIX = "launchd_label_prefix"
 PLACEHOLDER = re.compile(r"<[^<>]*>")
 PASSING = ("ok", "fixed", "skipped")
 
@@ -434,21 +438,26 @@ def check_paperclip_company(ctx):
 
 
 def check_watchdog(ctx):
-    reason = _paperclip_off(ctx) or _no_paperclip_dir(ctx)
+    reason = (_paperclip_off(ctx) or _no_paperclip_dir(ctx)
+              or ctx.settings.unconfigured(LABEL_PREFIX))
     if reason:
         return skipped(reason)
     sibling = SCRIPTS / NEW_ORG
     if not sibling.exists():
         return skipped(f"scripts/{NEW_ORG} does not exist yet, and it names and writes each watchdog agent")
+    live = live_configs(ctx)
+    if not live:
+        return skipped("no company in paperclip/ is live on this server, so there is no watchdog to load")
     org = _module("paperclip_new_org", NEW_ORG)
+    prefix = str(ctx.settings.get(LABEL_PREFIX))
     _, loaded = ctx.runner.run(["launchctl", "list"])
     fix, missing = [], []
-    for config in live_configs(ctx):
-        label = org.watchdog_label(config)
+    for config in live:
+        label = org.watchdog_label(config, prefix=prefix)
         if label in loaded:
             continue
         missing.append(label)
-        fix += _launch_agent(ctx, label, org.watchdog_plist(config, repo=ctx.repo))
+        fix += _launch_agent(ctx, label, org.watchdog_plist(config, repo=ctx.repo, prefix=prefix))
     return Outcome(not missing, f"missing {', '.join(missing)}" if missing else "a watchdog runs for each live company",
                    fix=fix)
 

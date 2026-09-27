@@ -61,6 +61,7 @@ class FakeRunner:
 # names are invented for the tests.
 CONFIGURED = {
     "workbench_path_in_templates": "/original/workbench",
+    "launchd_label_prefix": "org.example.workbench",
     "brew_packages": ["tool-a", "tool-b"],
     "node_min": "24.11.0",
     "agent_cli": {
@@ -224,6 +225,7 @@ class SettingsTests(unittest.TestCase):
         found = set(bs.placeholder_keys(data))
         expected = {
             "workbench_path_in_templates",
+            "launchd_label_prefix",
             "brew_packages[0]",
             "node_min",
             "agent_cli.command",
@@ -247,7 +249,7 @@ class SettingsTests(unittest.TestCase):
     def test_the_shipped_file_has_every_key_the_documented_schema_names(self):
         data = json.loads((ROOT / "bootstrap.settings.json").read_text())
         self.assertEqual(set(data), {
-            "workbench_path_in_templates", "brew_packages", "node_min", "agent_cli",
+            "workbench_path_in_templates", "launchd_label_prefix", "brew_packages", "node_min", "agent_cli",
             "packs", "repos", "cli_tools", "launch_agents", "review_webhook", "paperclip"})
         self.assertEqual(set(data["agent_cli"]),
                          {"command", "min_version", "version_args", "update_args", "sign_in_note"})
@@ -492,14 +494,51 @@ class PaperclipTests(unittest.TestCase):
             self.assertIn("paperclip/", result.detail)
             self.assertNotIn("raised", result.detail)
 
-    def test_a_missing_sibling_script_leaves_the_watchdog_skipped(self):
+    def watchdog(self, tmp, config=None, loaded="something.else"):
+        self.repo(tmp)
+        runner = FakeRunner({**HEALTHY, "launchctl list": (0, f"-\t0\t{loaded}\n")},
+                            http={"http://127.0.0.1:3100/api/companies": [{"id": "new"}]})
+        [result] = bs.run_steps(ctx(tmp, runner, config=config), only={"watchdog"})
+        return result
+
+    def test_a_missing_watchdog_is_written_per_live_company_with_the_settings_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.watchdog(tmp)
+        self.assertEqual(result.status, "fixable")
+        label = "org.example.workbench.paperclip-watchdog.second"
+        self.assertIn(label, result.detail)
+        self.assertTrue(any(c.startswith("write ") and c.endswith(f"{label}.plist") for c in result.commands))
+        self.assertTrue(any("launchctl bootstrap" in c for c in result.commands))
+
+    def test_a_loaded_watchdog_reports_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.watchdog(tmp, loaded="org.example.workbench.paperclip-watchdog.second")
+        self.assertEqual(result.status, "ok")
+
+    def test_an_unconfigured_label_prefix_leaves_the_watchdog_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.watchdog(tmp, config=settings({"launchd_label_prefix": "<reverse.dns.prefix>"}))
+        self.assertEqual(result.status, "skipped")
+        self.assertIn("launchd_label_prefix", result.detail)
+        self.assertNotIn("raised", result.detail)
+
+    def test_no_live_company_leaves_the_watchdog_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.repo(tmp)
-            runner = FakeRunner(HEALTHY, http={"http://127.0.0.1:3100/api/companies": [{"id": "new"}]})
+            runner = FakeRunner(HEALTHY, http={"http://127.0.0.1:3100/api/companies": []})
             [result] = bs.run_steps(ctx(tmp, runner), only={"watchdog"})
         self.assertEqual(result.status, "skipped")
-        self.assertIn("paperclip-new-org.py", result.detail)
+        self.assertIn("live", result.detail)
         self.assertNotIn("raised", result.detail)
+
+    def test_the_written_plist_carries_this_checkout_and_the_config_path(self):
+        org = bs._module("paperclip_new_org", bs.NEW_ORG)
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "paperclip" / "orgs" / "second.json"
+            text = org.watchdog_plist(config, repo=Path(tmp), prefix="org.example.workbench")
+        self.assertIn(f"{tmp}/scripts/paperclip-watchdog.py", text)
+        self.assertIn(str(config), text)
+        self.assertIn("<string>org.example.workbench.paperclip-watchdog.second</string>", text)
 
     def test_the_server_answering_reports_ok_at_the_configured_api(self):
         with tempfile.TemporaryDirectory() as tmp:

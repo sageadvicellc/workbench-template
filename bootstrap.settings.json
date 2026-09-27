@@ -1,5 +1,6 @@
 {
   "workbench_path_in_templates": "<absolute path of this workbench>",
+  "launchd_label_prefix": "<reverse.dns.prefix>",
   "brew_packages": ["<package>"],
   "node_min": "<x.y.z>",
   "agent_cli": {
