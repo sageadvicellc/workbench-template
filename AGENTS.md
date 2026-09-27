@@ -142,7 +142,9 @@ Read this file, then read only what the table sends you to.
 
 | Task | Use |
 |---|---|
-| Setting this workbench up for the first time | `prompts/setup.md` |
+| Setting this workbench up for the first time | `bootstrap.sh`, then `prompts/setup.md` |
+| Turning this workbench into a Paperclip company | `prompts/setup-paperclip.md`, which fills in `paperclip/` |
+| Setting up the Discord comms layer, the plugin, or phone access | `docs/setup/README.md` |
 | Which harnesses this workbench runs on, and how to wire one up | `adapters/README.md` |
 | Code: a feature, a fix, a script, a repo | the plugin named under "How work runs" |
 | Reviewing a diff before a pull request | that plugin's review skill or role |
@@ -190,6 +192,9 @@ project repos you nest here, which have their own remotes and are ignored.
 | `wiki/` | The one pack this template ships: the five wiki skills under `wiki/skills/`, with the manifests a harness installs it from | Root repo |
 | `scripts/` | Everything executable that is not a skill's and not a project's | Root repo |
 | `prompts/` | Prompts a person pastes in on purpose. Not loaded by anything | Root repo |
+| `paperclip/` | The orchestration layer's source of truth: the company, the org overlay, the wake prompt, one instruction file per agent, and the named subagent specs. The Paperclip server holds a copy, and `scripts/paperclip-apply.py` makes the copy match | Root repo |
+| `docs/setup/` | Runbooks for what lives outside this repo: the Discord comms layer, the plugin, and phone access. For the owner's own session, never an agent's | Root repo |
+| `.paperclip/` | Paperclip's own state: each agent's memory, the idea ledger, the watchdog log, and run scratch. Nothing a person authored | Ignored |
 | `DECISIONS.md` | The append-only decision log. The main session writes it | Root repo |
 
 > FILL: add one row per project repo you nest here, and add its directory name

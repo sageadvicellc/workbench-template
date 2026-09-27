@@ -216,7 +216,7 @@ It prints its plan and changes nothing. Show the owner. Then ask how to run it e
 
 Record the output tokens per closed issue from `GET /api/companies/{id}/costs/by-agent`. It is the number to watch.
 
-**2. Record it.** Add a row for `paperclip/` to the on-disk table in `AGENTS.md`. Append a decision to `DECISIONS.md`: the owner as board, the agents and their runtimes, the caps, and the watchdog choice.
+**2. Record it.** `AGENTS.md` already carries the `paperclip/` row, because the directory ships with the template. Append a decision to `DECISIONS.md` instead: the owner as board, the agents and their runtimes, the caps, and the watchdog choice.
 
 **3. Commit.** Branch, commit, open a pull request for the owner to review.
 

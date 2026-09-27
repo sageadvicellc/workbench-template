@@ -18,10 +18,15 @@ workbench/
   DECISIONS.md         append-only decision log
   .gitignore           project repos you nest here stay untracked
   .mcp.json            MCP servers, the one source every harness is wired from. Empty
+  bootstrap.sh         one command that sets a new machine up, from bootstrap.settings.json
   adapters/            one thin adapter per harness: a manifest, a README, and nothing else
   wiki/                the one pack this template ships: the five wiki skills and their manifests
   scripts/             the checks and the generator, with their tests
   prompts/             setup.md, setup-paperclip.md, and prompts you paste in on purpose
+  paperclip/           the orchestration layer's shape: the company, the org, the wake
+                       prompt, the agent and subagent specs. Placeholders until setup runs
+  docs/setup/          runbooks for the things outside this repo: the Discord comms
+                       layer, the plugin, and phone access
   central-context/     the knowledge base
     raw/               sources, immutable, written by a person
     wiki/              pages compiled from raw/, written by the agent
