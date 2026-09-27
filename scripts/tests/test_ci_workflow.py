@@ -95,23 +95,8 @@ class CiWorkflowTests(unittest.TestCase):
         on = _entries(_mapping(self.lines, "on", 0))
         self.assertEqual(set(on), {"pull_request", "workflow_dispatch"})
 
-    def test_top_level_permissions_are_contents_read_only(self):
-        self.assertEqual(_entries(_mapping(self.lines, "permissions", 0)),
-                         {"contents": "read"})
-
-    def test_every_job_declares_contents_read_only(self):
-        jobs = _jobs(self.lines)
-        self.assertTrue(jobs, "the workflow defines no job")
-        for name, block in jobs.items():
-            with self.subTest(job=name):
-                self.assertEqual(_entries(_mapping(block, "permissions", 4)),
-                                 {"contents": "read"})
-
-    def test_checkout_does_not_persist_the_token(self):
-        text = "\n".join(self.lines)
-        checkouts = text.count("uses: actions/checkout@")
-        self.assertGreater(checkouts, 0, "no checkout step")
-        self.assertEqual(text.count("persist-credentials: false"), checkouts)
+    def test_has_a_checkout_step(self):
+        self.assertIn("uses: actions/checkout@", "\n".join(self.lines))
 
     def test_runs_the_repository_tests_and_checks(self):
         text = "\n".join(self.lines)
@@ -136,8 +121,34 @@ class EveryWorkflowIsForkSafeTests(unittest.TestCase):
 
     def test_no_workflow_reads_a_secret(self):
         for path in _workflow_files():
+            text = path.read_text(encoding="utf-8")
             with self.subTest(workflow=path.name):
-                self.assertNotRegex(path.read_text(encoding="utf-8"), r"\bsecrets\.")
+                self.assertNotRegex(text, r"\bsecrets\.")
+                self.assertNotRegex(text, r"\bsecrets:\s*inherit\b")
+
+    def test_every_workflow_grants_contents_read_only_at_the_top(self):
+        for path in _workflow_files():
+            lines = _code_lines(path.read_text(encoding="utf-8"))
+            with self.subTest(workflow=path.name):
+                self.assertEqual(_entries(_mapping(lines, "permissions", 0)),
+                                 {"contents": "read"})
+
+    def test_every_job_declares_contents_read_only(self):
+        for path in _workflow_files():
+            jobs = _jobs(_code_lines(path.read_text(encoding="utf-8")))
+            with self.subTest(workflow=path.name):
+                self.assertTrue(jobs, "the workflow defines no job")
+            for name, block in jobs.items():
+                with self.subTest(workflow=path.name, job=name):
+                    self.assertEqual(_entries(_mapping(block, "permissions", 4)),
+                                     {"contents": "read"})
+
+    def test_no_checkout_persists_the_token(self):
+        for path in _workflow_files():
+            text = "\n".join(_code_lines(path.read_text(encoding="utf-8")))
+            with self.subTest(workflow=path.name):
+                self.assertEqual(text.count("persist-credentials: false"),
+                                 text.count("uses: actions/checkout@"))
 
     def test_no_workflow_grants_a_write_scope(self):
         for path in _workflow_files():
