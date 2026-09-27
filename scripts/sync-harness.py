@@ -83,9 +83,12 @@ def _bare_key(key, where):
 def render_toml_mcp_servers(servers, source_rel):
     """`[mcp_servers.<name>]` tables from the `mcpServers` object of the source
     file. Two shapes map: a local command, and a remote URL with at most a
-    bearer token read from an environment variable. Anything else is refused
-    by name, because a table the harness reads differently from the source
-    would be a server that works on one harness and silently not the other."""
+    bearer token read from an environment variable. A local command's env
+    entry of the bare form "${NAME}" maps the same way, into `env_vars`, so
+    the value itself is never written to the generated file. Anything else is
+    refused by name, because a table the harness reads differently from the
+    source would be a server that works on one harness and silently not the
+    other."""
     out = [f"# --- {GENERATED_MARK.format(source=source_rel)} ---"]
     for name in sorted(servers):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
@@ -104,7 +107,7 @@ def render_toml_mcp_servers(servers, source_rel):
             if not keys <= {"command", "args", "env"}:
                 extra = ", ".join(sorted(keys - {"command", "args", "env"}))
                 raise SyncError(f"{where}: key(s) not rendered: {extra}")
-            _no_expansion(source_rel, name, spec)
+            _no_expansion(source_rel, name, spec, ("command", "args"))
             out.append(f"command = {toml_basic(spec['command'])}")
             args = spec.get("args", [])
             if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
@@ -114,10 +117,29 @@ def render_toml_mcp_servers(servers, source_rel):
             if env:
                 if not isinstance(env, dict) or not all(isinstance(v, str) for v in env.values()):
                     raise SyncError(f"{where}: env must map names to strings")
-                out.append("")
-                out.append(f"[mcp_servers.{name}.env]")
+                refs = []
+                literal = {}
                 for k in sorted(env):
-                    out.append(f"{_bare_key(k, where + ' env')} = {toml_basic(env[k])}")
+                    ref = _env_var_ref(env[k])
+                    if ref is not None:
+                        if ref != k:
+                            raise SyncError(
+                                f"{where}: env {k!r} references \"${{{ref}}}\"; only a "
+                                f"same-named reference is rendered, as env_vars")
+                        refs.append(ref)
+                    elif "${" in env[k]:
+                        raise SyncError(
+                            f"{where}: env {k!r} uses ${{...}} expansion; only a bare "
+                            f'"${{{k}}}" value is rendered, as an env_vars reference')
+                    else:
+                        literal[_bare_key(k, where + " env")] = env[k]
+                if refs:
+                    out.append("env_vars = [" + ", ".join(toml_basic(r) for r in refs) + "]")
+                if literal:
+                    out.append("")
+                    out.append(f"[mcp_servers.{name}.env]")
+                    for k in sorted(literal):
+                        out.append(f"{k} = {toml_basic(literal[k])}")
         elif kind in ("http", "sse"):
             if not isinstance(spec.get("url"), str):
                 raise SyncError(f"{where}: a remote server needs a url, as a string")
@@ -140,8 +162,8 @@ def render_toml_mcp_servers(servers, source_rel):
     return "\n".join(out) + "\n"
 
 
-def _no_expansion(source_rel, name, spec):
-    for field in ("command", "args", "env"):
+def _no_expansion(source_rel, name, spec, fields):
+    for field in fields:
         value = spec.get(field)
         blob = json.dumps(value) if value is not None else ""
         if "${" in blob:
@@ -154,6 +176,14 @@ def _bearer_env(headers):
     if list(headers) != ["Authorization"]:
         return None
     match = re.fullmatch(r"Bearer \$\{([A-Za-z_][A-Za-z0-9_]*)\}", str(headers["Authorization"]))
+    return match.group(1) if match else None
+
+
+def _env_var_ref(value):
+    """A bare "${NAME}" env value: a reference to forward, not a literal to
+    embed. The target format reads it from its own environment at launch, as
+    `env_vars`."""
+    match = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value)
     return match.group(1) if match else None
 
 
