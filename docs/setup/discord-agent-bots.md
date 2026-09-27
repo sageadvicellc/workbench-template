@@ -24,9 +24,14 @@ it.
 
 The system bot is the default bot. It posts the system notices, and it is the
 **only** bot that reads messages. It receives the owner's replies, button
-clicks, and slash commands, and it joins the voice channel if live voice is on.
-Every lead bot connects with message listening off, so none of them needs a
-privileged intent.
+clicks, and slash commands. When live voice is on, it also joins the voice
+channel. Every lead bot connects with message listening off, so none of them
+needs a privileged intent.
+
+Message listening off is a property of the bot's own code. A permission grant is
+what the server allows it to do. The two are separate. So step 3 leaves the
+history permission out of the lead invite, and step 4 grants it to the system
+bot alone.
 
 ## Before you start
 
@@ -76,25 +81,38 @@ privileged intent.
    place:
 
    ```
-   https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot&permissions=309237730368
+   https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot&permissions=309237664832
    ```
 
-   That integer grants seven permissions: `AddReactions`, `ViewChannel`,
-   `SendMessages`, `EmbedLinks`, `ReadMessageHistory`, `CreatePublicThreads`,
-   and `SendMessagesInThreads`. Check the bits in Discord's permission
-   calculator before you use the number. Do not carry it from memory into a
-   different permission set.
+   That integer grants six permissions: `AddReactions`, `ViewChannel`,
+   `SendMessages`, `EmbedLinks`, `CreatePublicThreads`, and
+   `SendMessagesInThreads`. It leaves `ReadMessageHistory` out on purpose.
+   `ReadMessageHistory` lets a bot fetch a channel's past messages over the
+   REST API, whatever its gateway intents say. Grant it to a lead bot, and the
+   claim above that the system bot is the only bot that reads messages stops
+   holding.
 
-4. **Invite the system bot.** The same form, with one more scope and one more
-   permission:
+   Dropping that permission costs a bot that only posts one thing: it cannot
+   fetch a message, so it cannot quote one. A library call that resolves a reply
+   target by fetching it returns a permission error. If a lead bot then cannot
+   post where you expect it to, add the bit back and record why.
+
+   Check the bits in Discord's permission calculator before you use the number.
+   Do not carry a permission integer from memory into a different permission
+   set.
+
+4. **Invite the system bot.** The same form, with one more scope and two more
+   permissions:
 
    ```
    https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot%20applications.commands&permissions=309238778944
    ```
 
-   The `applications.commands` scope carries the slash command. The extra
-   permission is `Connect`, so the bot can join the voice channel. Leave the
-   scope and the extra bit off if you want neither.
+   The `applications.commands` scope carries the slash command. The two extra
+   permissions are `ReadMessageHistory` and `Connect`. This bot holds
+   `ReadMessageHistory` because it is the bot that reads messages, and `Connect`
+   so it can join the voice channel. If you want neither the slash command nor
+   the voice channel, leave the scope and the `Connect` bit off.
 
 5. **Add the tokens to the env file.** Beside the two lines the server runbook
    wrote, add one line per application:
@@ -112,9 +130,10 @@ privileged intent.
    This file is now the only copy of every token. After any token reset, edit
    this file, then restart whatever reads it.
 
-6. **Keep the Model Context Protocol server to its own token.** If the server
-   runbook's launch command exported every line of the env file, replace the
-   registration now with one that passes the maintenance token alone:
+6. **Keep the Model Context Protocol server to its own token.** Read the
+   registration the server runbook left. When its launch command exports every
+   line of the env file, replace it now with one that passes the maintenance
+   token alone:
 
    ```bash
    claude mcp remove --scope local discord
@@ -144,8 +163,12 @@ Run each of these and read the output. Do not take any of them on trust.
 - The server's member list shows every new bot and the maintenance bot.
 - Each lead bot can post in the open channels.
 - `ls -l ~/.config/<workbench>/.env` reports mode 600 and your own account.
-  The env file is the only copy of every token, so this is the check that
-  proves the rule at the top of `README.md` holds.
+  That proves one thing: no other account on this machine reads the file. It
+  does not prove the rule at the top of `README.md`. That rule is about whether
+  an agent's own session sources this file, and no check in this repository
+  looks at that. Check it by hand. Read the launch command of every session an
+  agent runs in. None of them sources this file, and none of them exports a
+  line out of it.
 
 Keep each application's Application ID. An Application ID is not a secret, and
 an ID is how anything that posts for an agent names the bot it posts through.

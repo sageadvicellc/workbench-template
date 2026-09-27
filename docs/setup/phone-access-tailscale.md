@@ -75,6 +75,10 @@ the network in the clear, so the two go together.
    the server checks no `Host` header, skip this step, and expect nothing from
    the matching check below.
 
+   Skipping it leaves one thing between a browser on any device on the private
+   network and a service that asks for no sign-in: the network's own device
+   list. Read that device list again before you skip this step.
+
 4. **Serve the local port on the private network.** The service listens on
    loopback. Put that port on the network, in the background, so it survives
    the terminal closing:

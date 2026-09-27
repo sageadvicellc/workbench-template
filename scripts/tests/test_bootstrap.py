@@ -13,6 +13,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,13 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 ROOT = SCRIPTS.parent
+
+# The stand-in home directory inside each test's temp directory. It is not
+# named `home`, because a temp path ending in that name then reads as an
+# absolute home directory path, and `test_public_scrub.py` fails any tracked
+# file that carries one.
+FAKE_HOME = "stand-in-home"
+
 sys.path.insert(0, str(SCRIPTS))
 _spec = importlib.util.spec_from_file_location("bootstrap", SCRIPTS / "bootstrap.py")
 bs = importlib.util.module_from_spec(_spec)
@@ -93,6 +101,15 @@ HEALTHY = {
 }
 
 
+def settings_accessor(key):
+    """A pattern that matches a real read of this settings key: the key, or a
+    dotted path starting with it, quoted inside a call to `get`,
+    `unconfigured`, or `first_unconfigured`. Those three are the only ways
+    `bootstrap.py` reads a setting."""
+    return re.compile(r"\.(?:get|unconfigured|first_unconfigured)\("
+                      rf'[^)]*"{re.escape(key)}(?:\.[A-Za-z_]+)*"')
+
+
 def settings(overrides=None, base=CONFIGURED):
     """A deep-ish copy of `base` with `overrides` merged one level down."""
     data = json.loads(json.dumps(base))
@@ -107,7 +124,7 @@ def settings(overrides=None, base=CONFIGURED):
 def ctx(tmp, runner, fix=False, config=None, yes=True):
     """A context for a test. `yes` skips the settings-commands prompt, which is
     what every test but `ApprovalTests` wants: no test may read stdin."""
-    return bs.Context(repo=Path(tmp), home=Path(tmp) / "home", runner=runner, fix=fix,
+    return bs.Context(repo=Path(tmp), home=Path(tmp) / FAKE_HOME, runner=runner, fix=fix,
                       settings=config if config is not None else settings(), assume_yes=yes)
 
 
@@ -198,7 +215,7 @@ class StatusTests(unittest.TestCase):
             template = Path(tmp) / "scripts" / "org.example.refresh.plist.template"
             template.parent.mkdir(parents=True)
             template.write_text("<string>/original/workbench/x</string>\n")
-            (Path(tmp) / "home").write_text("a file where the home directory should be")
+            (Path(tmp) / FAKE_HOME).write_text("a file where the home directory should be")
             runner = FakeRunner({**HEALTHY, "launchctl list": (0, "-\t0\tsomething.else\n")})
             results = bs.run_steps(ctx(tmp, runner, fix=True), only={"launch-agents", "always-on"})
         self.assertEqual([r.status for r in results], ["failed", "ok"])
@@ -274,12 +291,26 @@ class SettingsTests(unittest.TestCase):
 
     def test_every_key_in_the_shipped_file_is_read_by_a_step(self):
         """A settings key nothing reads is a question the reader answers for
-        nothing. Each key below names the step that reads it."""
+        nothing. The match is anchored to a settings accessor call, because a
+        key named only in a comment or a docstring is not read by anything."""
         data = json.loads((ROOT / "bootstrap.settings.json").read_text())
         source = (SCRIPTS / "bootstrap.py").read_text()
         for key in data:
             with self.subTest(key=key):
-                self.assertIn(key, source, f"{key} is in the settings file and nothing reads it")
+                self.assertRegex(source, settings_accessor(key),
+                                 f"{key} is in the settings file and no step reads it")
+
+    def test_a_key_named_only_in_a_comment_does_not_count_as_read(self):
+        """The check above used to match the key name anywhere in the file, so a
+        key that was named in a comment and read nowhere passed it."""
+        pattern = settings_accessor("node_min")
+        self.assertIsNone(pattern.search("# node_min is read by the node step\n"))
+        self.assertIsNone(pattern.search('"""node_min: the minimum version."""\n'))
+        self.assertIsNotNone(pattern.search('minimum = str(ctx.settings.get("node_min"))'))
+        self.assertIsNotNone(pattern.search('ctx.settings.unconfigured("node_min")'))
+        self.assertIsNotNone(pattern.search(
+            'ctx.settings.first_unconfigured("launch_agents", "node_min")'))
+        self.assertIsNotNone(pattern.search('ctx.settings.get("node_min.floor")'))
 
     def test_the_shipped_file_leaves_every_step_skipped_and_never_raises(self):
         data = json.loads((ROOT / "bootstrap.settings.json").read_text())
@@ -380,7 +411,7 @@ class RepoTests(unittest.TestCase):
             [result] = bs.run_steps(ctx(tmp, FakeRunner(HEALTHY), config=config), only={"repos"})
         self.assertEqual(result.status, "fixable")
         self.assertIn(f"gh repo clone owner-one/repo-one {tmp}/nested/repo-one", result.commands)
-        self.assertIn(f"gh repo clone owner-one/repo-two {tmp}/home/code/repo-two", result.commands)
+        self.assertIn(f"gh repo clone owner-one/repo-two {tmp}/{FAKE_HOME}/code/repo-two", result.commands)
         self.assertIn("gh repo clone owner-one/repo-three /opt/repo-three", result.commands)
 
     def test_a_cloned_repo_reports_ok(self):
@@ -452,7 +483,7 @@ class LaunchAgentTests(unittest.TestCase):
             [result] = bs.run_steps(ctx(tmp, runner, fix=True, config=config), only={"launch-agents"})
         self.assertEqual(result.status, "failed")
         self.assertIn("launchd label", result.detail)
-        self.assertFalse((Path(tmp) / "home" / "Library").exists())
+        self.assertFalse((Path(tmp) / FAKE_HOME / "Library").exists())
 
     def test_the_label_rule_accepts_a_reverse_dns_label_and_refuses_the_rest(self):
         self.assertEqual(bs.check_label("org.example.work_bench-1"), "org.example.work_bench-1")
@@ -468,7 +499,7 @@ class LaunchAgentTests(unittest.TestCase):
             self.template(tmp)
             runner = FakeRunner({**HEALTHY, "launchctl list": (0, ""), "launchctl bootstrap": (0, "")})
             bs.run_steps(ctx(tmp, runner, fix=True), only={"launch-agents"})
-            plist = Path(tmp) / "home" / "Library" / "LaunchAgents" / "org.example.refresh.plist"
+            plist = Path(tmp) / FAKE_HOME / "Library" / "LaunchAgents" / "org.example.refresh.plist"
             self.assertTrue(plist.is_file())
             self.assertEqual(plist.stat().st_mode & 0o777, 0o600)
 
@@ -487,11 +518,11 @@ class ReviewWebhookTests(unittest.TestCase):
             [result] = bs.run_steps(ctx(tmp, FakeRunner(HEALTHY)), only={"review-webhook"})
         self.assertEqual(result.status, "manual")
         self.assertEqual(result.commands, ["Open the chat app and copy the webhook URL"])
-        self.assertIn(f"{tmp}/home/.config/reviews/webhook", result.detail)
+        self.assertIn(f"{tmp}/{FAKE_HOME}/.config/reviews/webhook", result.detail)
 
     def test_a_present_webhook_reports_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
-            runner = FakeRunner(HEALTHY, files={f"{tmp}/home/.config/reviews/webhook"})
+            runner = FakeRunner(HEALTHY, files={f"{tmp}/{FAKE_HOME}/.config/reviews/webhook"})
             [result] = bs.run_steps(ctx(tmp, runner), only={"review-webhook"})
         self.assertEqual(result.status, "ok")
 
