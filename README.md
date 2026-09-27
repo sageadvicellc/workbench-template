@@ -1,4 +1,25 @@
-# workbench-template
+# Sage Trellis
+
+Trellis is an open-source framework for running agents as coworkers. Its public
+name is "Sage Trellis", and this is version 1. It is released under the MIT
+License, in `LICENSE`. This repository, `workbench-template`, is the framework's
+workbench.
+
+Trellis has six parts. Each name below is a working name, and each repository
+keeps its current name until a later release renames it.
+
+| Working name | What it is | In the public framework |
+|---|---|---|
+| trellis-workbench | This repository: the LLM wiki and the checks that keep it true | Yes |
+| trellis-relay | The relay half of the agent-as-a-coworker layer | Yes |
+| trellis-bot | The bot half of the agent-as-a-coworker layer | Yes |
+| trellis-roots | The headless agent graph, where you own your data and watch system health | Yes |
+| trellis-vines | The telemetry, trace, and audit API | Yes |
+| trellis-garden | A proprietary user interface | No |
+
+Sagespec is a separate product that Sage Advice LLC builds on Trellis.
+
+## The workbench
 
 A starting structure for a workbench built around an LLM wiki: a knowledge base
 an agent compiles from sources and keeps current, plus the checks that keep it
