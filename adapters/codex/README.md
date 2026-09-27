@@ -89,15 +89,20 @@ everything else by name, because a server the two harnesses read differently
 is a server that works on one and silently not the other:
 
 - A local server: `command`, `args`, and `env` become `command`, `args`, and
-  `[mcp_servers.<name>.env]`. A value containing `${` is refused, because the
-  target format performs no expansion.
+  `[mcp_servers.<name>.env]`. An `env` value of exactly `${NAME}` becomes an
+  `env_vars = ["NAME"]` reference instead, naming the variable for the
+  harness to read from its own environment, rather than writing the value
+  into the tracked generated file. Any other use of `${` is refused, because
+  the target format performs no other expansion.
 - A remote server: `type: "http"` or `"sse"` with `url` becomes `url`. A
   header of exactly `Authorization: "Bearer ${NAME}"` becomes
   `bearer_token_env_var = "NAME"`. Any other header is refused.
 
-The documented shapes are `command`, `args`, `env` for a local server and
-`url` with `bearer_token_env_var` for a remote one
-(`https://learn.chatgpt.com/docs/extend/mcp`, retrieved 2026-09-12).
+The documented shapes are `command`, `args`, `env`, and `env_vars` for a local
+server and `url` with `bearer_token_env_var` for a remote one
+(`https://learn.chatgpt.com/docs/extend/mcp`, retrieved 2026-09-27).
+`env_vars` "can contain plain variable names or objects with a source", and a
+plain name "read[s] from Codex's local environment" (same page and date).
 
 `config.toml` beside this file is the hand-edited head of the generated file.
 Edit it, never `.codex/config.toml`. It ships as comments only.
