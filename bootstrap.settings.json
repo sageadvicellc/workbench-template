@@ -1,6 +1,5 @@
 {
   "workbench_path_in_templates": "<absolute path of this workbench>",
-  "launchd_label_prefix": "<reverse.dns.prefix>",
   "brew_packages": ["<package>"],
   "node_min": "<x.y.z>",
   "agent_cli": {
@@ -23,6 +22,5 @@
   "review_webhook": {
     "path": "<absolute path of the file that holds one webhook URL>",
     "how": ["<what a person does to get the URL>"]
-  },
-  "paperclip": { "enabled": false, "api": "http://127.0.0.1:3100", "version": "<x.y.z>" }
+  }
 }

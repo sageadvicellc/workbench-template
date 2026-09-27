@@ -1,6 +1,6 @@
 ---
 type: index
-updated: 2026-09-25
+updated: 2026-09-27
 ---
 
 # scripts
@@ -29,13 +29,6 @@ project's repo. Everything else is here.
 | `open-items-files.txt` | Data, not a script. The context files `check-open-items.py` reads by default | Read by `check-open-items.py` |
 | `sync-harness.py` | Generates, per adapter manifest, the MCP tables a harness reads in its own format, from `.mcp.json` | The workbench root: `python3 scripts/sync-harness.py`, or `--check` to report and write nothing |
 | `check-harness.py` | Proves the wiring: every declared symlink, every skill reachable through it, every generated file current, no harness named in the neutral core, and the entrypoint under its size cap | The workbench root: `python3 scripts/check-harness.py` |
-| `paperclip-apply.py` | Makes a live Paperclip company match `paperclip/company.json`: the company flags, the instance switches, the labels, the org chart, the run caps, each agent's adapter, heartbeat, permissions, wake prompt and `AGENTS.md`, and each pipeline, routine and goal. Compares before it writes, so a rerun after a failure plans only what is left. Prints a plan and changes nothing without `--apply` | The workbench root: `python3 scripts/paperclip-apply.py` |
-| `paperclip-watchdog.py` | The one automated stop on a Paperclip team. Pauses an agent at its run cap or after a burst of authentication failures, holds the assignment gate, starts board-approved work, parks work no person asked for, guards against a cascade of agent-made issues, and swaps a failing lead to its standby twin. Calls no model | The workbench root: `python3 scripts/paperclip-watchdog.py --dry-run` |
-| `paperclip-new-org.py` | Starts a second Paperclip company from an overlay under `paperclip/orgs/`: creates the company, writes its id back into the overlay, runs the apply, records each hired agent's id, and prints that company's watchdog plist. Changes nothing without `--apply` | The workbench root: `python3 scripts/paperclip-new-org.py paperclip/orgs/<name>.json` |
-| `paperclip-watchdog.plist.template` | Data, not a script. The launchd agent that runs the watchdog every five minutes for a workbench with one company. Holds two substitution markers, the label prefix and the workbench path | Rendered by `paperclip-new-org.py`'s `render_watchdog_template`, then installed by hand |
-| `usage-value.py` | What this workbench's model use would cost at API list prices, by day, by source and by model, against a plan price. Reads transcripts only; changes nothing | The workbench root: `python3 scripts/usage-value.py --root <transcripts>` |
-| `paperclip_lib.py` | The config loader, the overlay merge, the run-cap validator, the launchd label prefix loader, and the HTTP client the Paperclip scripts share | Imported, not run |
-| `paperclip/api-prices.json` | Data, not a script. Model list prices per million tokens, with the source URL and the date they were read, and one plan price per provider. Names no account, key or organisation | Read by `usage-value.py` |
 
 ## bootstrap.py
 
@@ -70,9 +63,7 @@ the default. `--check` never asks, because it never runs anything.
 A generated launchd plist is written at mode 600, readable only by its owner,
 and its label may hold only letters, digits, a dot, an underscore, and a hyphen.
 The label becomes a file name under `~/Library/LaunchAgents`, so a label with a
-`/` or a `..` in it is refused by name rather than joined into a path. The
-Paperclip API address in `paperclip.api` must be `http` or `https`, because
-`urlopen` honours `file://` and `ftp://` too.
+`/` or a `..` in it is refused by name rather than joined into a path.
 
 The seven statuses are `ok`, `fixed`, `fixable`, `manual`, `blocked`, `failed`,
 and `skipped`. The exit code is 1 when any step is `manual`, `fixable`,
@@ -92,10 +83,6 @@ The steps, in order, and what each one checks:
 | `repos` | every directory in `repos` exists, and clones the ones that do not |
 | `packs` | every entry in `packs.install` appears in the pack list, and adds each marketplace first |
 | `cli-tools` | every `cli_tools` entry's `name` is on the PATH |
-| `paperclip-cli` | `paperclipai` answers, at the version in `paperclip.version` |
-| `paperclip-server` | `paperclip.api` answers on loopback |
-| `paperclip-company` | one config under `paperclip/` names a company the server knows |
-| `watchdog` | a launchd watchdog is loaded for each live company, labelled with `launchd_label_prefix` |
 | `launch-agents` | every `launch_agents` label is loaded, writing its plist template with this checkout's path in place of `workbench_path_in_templates` |
 | `review-webhook` | the file at `review_webhook.path` exists. It never prints the URL |
 | `always-on` | `pmset -g` reports `sleep 0`, because a Mac that sleeps stops every agent run |
@@ -106,10 +93,9 @@ The steps, in order, and what each one checks:
 setting that still holds an angle-bracket placeholder, such as `<x.y.z>`, or a
 list that is empty, makes its step `skipped`, and the detail names the settings
 key to fill in. A `skipped` step judges nothing: it blocks no step that needs
-it, and it never makes the exit code non-zero on its own. The three Paperclip
-steps and the watchdog are `skipped` whenever `paperclip.enabled` is false. A
-step whose plist template, sibling script, or `paperclip/` directory is absent
-is `skipped` too, with the path in the detail, rather than raising.
+it, and it never makes the exit code non-zero on its own. A step whose plist
+template is absent is `skipped` too, with the path in the detail, rather than
+raising.
 
 The text report ends with one line naming every settings key still holding a
 placeholder, so a single run tells a person everything left to fill in. The
@@ -135,166 +121,10 @@ same rule applies to `review_webhook.path` and to each `launch_agents`
 The file ships fully unconfigured, so a fresh clone reports every configurable
 step as `skipped` and nothing else. Fill it in during setup.
 
-`launchd_label_prefix` is the reverse-DNS prefix every launchd label here is
-built from, such as `org.example.workbench`. A label prefix names a practice, so
-it lives here and never in a script. Three things read it: the `watchdog` step
-above, `paperclip-new-org.py`, and `paperclip-watchdog.plist.template`. While it
-still holds `<reverse.dns.prefix>`, the `watchdog` step is `skipped` and the two
-Paperclip callers refuse with an error naming the key.
-
-## paperclip-apply.py
-
-The tracked files under `paperclip/` are the source of truth for the team. This
-script reads the live company, prints every difference, and sends nothing unless
-`--apply` is given.
-
-    python3 scripts/paperclip-apply.py                              # dry run
-    python3 scripts/paperclip-apply.py --apply                      # send it
-    python3 scripts/paperclip-apply.py --config paperclip/orgs/<name>.json
-    python3 scripts/paperclip-apply.py --show-bodies                # print each request body
-
-**It compares before it writes.** Every action exists because a desired value
-and a live value differ, so an in-sync company is a no-op even with `--apply`,
-and a run that fails part way is safe to rerun: the rerun plans only what did
-not land. A failure names how many changes went out before it.
-
-Five behaviours are worth knowing before the first run.
-
-- **A hire goes through board approval.** With
-  `company["requireBoardApprovalForNewAgents"]` on, even the board hires through
-  `POST /api/companies/{id}/agent-hires`, so the script approves the hire it
-  just created: running it with `--apply` *is* the board's approval. If the hire
-  lands and the approval call fails, the error says so and names the agent to
-  approve by hand.
-- **A second pass sets what a hire cannot carry.** The server refuses a wake
-  prompt on a new agent and gives a hire a default task-assign grant, so after
-  every applied pass the script replans and sends the difference. The same pass
-  fills in a `reportsTo` that named a manager hired moments earlier, creates a
-  routine or goal whose assignee was hired in the first pass, and adds a new
-  routine's schedule trigger.
-- **An agent is matched by id, then by name.** Two live agents with one name is
-  an error rather than a guess, because a name match could push one agent's
-  config onto another.
-- **The heartbeat ships off.** `defaults.runtimeConfig.heartbeat.enabled` is
-  `false` and nothing here turns it on. A heartbeat timer wakes an idle agent on
-  a clock with nothing asking for the work, which is an unbounded loop.
-- **A pipeline that exists but does not match is reported, never silently
-  accepted.** A half-built pipeline, an approver the server downgraded to "any
-  human", or automation wired to the wrong agent each print as drift for a
-  person to fix or archive. A drift note is never sent anywhere.
-
-Two settings stay off by default, `applyAssignmentPolicy` and `applyPipelines`,
-because each needs a proof run against a throwaway company first.
-
-## paperclip-new-org.py
-
-A second company, run by the same team, from an overlay under `paperclip/orgs/`.
-An overlay names its base with `extends` and the new company in `company.name`.
-
-    python3 scripts/paperclip-new-org.py paperclip/orgs/<name>.json                   # dry run
-    python3 scripts/paperclip-new-org.py paperclip/orgs/<name>.json --apply
-    python3 scripts/paperclip-new-org.py paperclip/orgs/<name>.json --watchdog-plist
-
-**A live company with the overlay's name is an error, not a match.** Adopting a
-company by name alone could configure the wrong one, and a rerun after a lost
-write must not create a second. Set `companyId` by hand if the live company is
-the right one.
-
-**The overlay is patched from a fresh read and replaced atomically.** The read
-happens after the network call, so an edit somebody made to the overlay while
-the request was in flight survives; only the keys the patch sets are written,
-and a crash mid-write leaves the old file rather than a torn one. Commit the
-overlay after `--apply`: the ids it records are how the next apply finds the
-same agents.
-
-`--watchdog-plist` prints the launchd agent for this company, labelled
-`<launchd_label_prefix>.paperclip-watchdog.<overlay stem>`, so every company on
-one machine gets its own. `render_watchdog_template` renders the tracked
-single-company template the same way, from the same prefix, which is why the
-installed file and `bootstrap.py`'s `watchdog` step never disagree.
-
-## paperclip-watchdog.py
-
-The one automated stop. It calls no model: it reads the local Paperclip API,
-decides, and writes only to `/api/` paths, so it can never be the thing that
-spends a run. A pass with nothing to do costs under a second. Its module
-docstring lists all seven duties; this section carries what a person setting it
-up has to know.
-
-    python3 scripts/paperclip-watchdog.py --dry-run   # print the plan, change nothing
-    python3 scripts/paperclip-watchdog.py             # act and log
-
-Run `paperclip-apply.py --apply` once first: the watchdog needs the
-`scope-creep` label to exist. Each company keeps its own state file and log,
-named in `watchdog.stateFile` and `watchdog.logFile`. Both must name a path
-under this checkout: they are joined onto the repository root, and a `../` or an
-absolute path in either would write outside it. The log is written at mode 600,
-because it holds issue titles, agent names, and pause reasons.
-
-An overlay's `extends` must name a file under the same `paperclip/` directory as
-the overlay itself, and a chain that reaches a file twice is a named error
-rather than a `RecursionError`.
-
-**Three cautions, each learned the hard way.**
-
-1. **No run cap may be `0`.** Every enforcement site tests a cap for
-   truthiness, so a `0` reads as "no cap configured" and disables the breaker
-   instead of stopping the agent, silently and with no warning. The caps are
-   validated before they are read: a `0`, a `"60"`, a `60.0`, a negative, or a
-   `true` is a clear error. No example, default, or template value may be `0`.
-   Leave a cap out to mean uncapped; never write it as zero.
-2. **A cap-paused agent never resumes on its own.** There is no new-day resume
-   here. A per-agent cap stops one agent; an adapter's `harnessTotal` stops
-   every agent on that adapter, and a fleet-total pause therefore stops the
-   whole team and waits for a person. Resume from the Paperclip interface, or
-   with that agent's resume route in the Paperclip API. Size `harnessTotal`
-   knowing that.
-3. **The heartbeat stays off.** A template that shipped an idle-run behaviour
-   with a heartbeat timer on would ship an unbounded loop, so
-   `defaults.runtimeConfig.heartbeat.enabled` is `false` in every example here
-   and `paperclip-apply.py` never turns it on.
-
-Two `watchdog` lists are empty by default and change nothing until they are set.
-`leadKeys` names which agent keys are leads, which is what makes a lead's
-delegation child exempt from the assignment gate and the scope-creep park.
-`workerKeys` names which are workers, which is what pauses a worker that creates
-an issue. A lead is never listed in `workerKeys`: a lead creating child issues is
-the flow working as designed.
-
-## usage-value.py
-
-A subscription has no dollar figure per run. This puts one on them, for the
-return on the plan: it reads agent transcripts, prices each assistant message by
-its model, and totals by day, by source and by model.
-
-    python3 scripts/usage-value.py --root <transcripts>
-    python3 scripts/usage-value.py --root <transcripts> --since 2026-09-01
-    python3 scripts/usage-value.py --root <transcripts> --subscription-usd 200
-    python3 scripts/usage-value.py --root <transcripts> --json
-
-`--root` is required and has no default, because a default would name one
-harness's transcript directory and no script in this tree names a harness. It is
-a directory of JSON Lines transcripts, read recursively, so a subagent's
-transcript in a subfolder counts too.
-
-A message logged more than once counts once, matched on its id and request id. A
-source is `fleet` when a line's `entrypoint` is one of `FLEET_ENTRYPOINTS` and
-`interactive` otherwise. A self-hosted model listed under `localModels` is
-priced at the API model it stands in for and reported as money saved, apart from
-the plan total. **A model the prices file does not list is never priced at
-zero:** it is named with its output tokens, so a reader knows the total is
-short.
-
-Anything the run could not read is counted and named the same way, in the text
-and under `skipped` in the JSON: `roots` for a root that is not a readable
-directory, `files` for a transcript that raised on read, and `lines` for a line
-that is not JSON. A mistyped `--root` used to read as a month with no usage.
-
-`paperclip/api-prices.json` holds the figures, with `source`, `retrieved`, and a
-plan price per provider. Every number there was read from the vendor's public
-pricing page on the date the file records. It names no billing account, key or
-organisation. Update it by reading those pages again and changing the
-`retrieved` date in the same commit.
+Every key in the file is read by a step, and
+`scripts/tests/test_bootstrap.py` checks that. A key nothing reads is a
+question a reader answers for nothing, so the suite fails rather than let one
+stand.
 
 ## check-skills.py
 

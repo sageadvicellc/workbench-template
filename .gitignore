@@ -34,8 +34,3 @@ __pycache__/
 
 # Hook output. Nobody reads it.
 runs/
-
-# Paperclip's own state: agent memory, the idea ledger, the watchdog log, and
-# run scratch. Nothing a person authored. The README is the one exception.
-.paperclip/*
-!.paperclip/README.md

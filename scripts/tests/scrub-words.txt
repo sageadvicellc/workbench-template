@@ -1,4 +1,4 @@
-# Words that must not appear in any tracked file under `paperclip/`.
+# Words that must not appear in any markdown or JSON file in this repository.
 #
 # The template ships this file empty. Fill it in once you have specialised the
 # workbench, with the words that identify you: each agent's name, the business

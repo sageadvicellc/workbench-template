@@ -1,8 +1,8 @@
 # Runbook: the Discord server
 
 Builds the server, its channels, its roles, and one maintenance bot. For the
-owner's own interactive session, not for a Paperclip agent. Read
-`docs/setup/README.md` first.
+owner's own interactive session, not for an agent. Read `docs/setup/README.md`
+first.
 
 The pattern this follows: a setup bot, driven from a local Model Context
 Protocol server, configures the server. A Model Context Protocol server is a
@@ -13,7 +13,7 @@ server's maintenance bot, for every later change to channels and roles.
 
 One rule decides it: no bot token reaches an agent's runtime. This variant
 keeps the rule by never handing the Model Context Protocol server or its token
-to any Paperclip agent. Only the owner's own sessions hold that token.
+to any agent. Only the owner's own sessions hold that token.
 
 The agent bots are separate Discord applications with their own tokens, built
 in `discord-agent-bots.md`. This runbook creates none of them. It builds only
@@ -54,8 +54,9 @@ the channel and role layout they post into.
 
    - `MANAGE_WEBHOOKS` is absent because no step in any runbook here creates a
      webhook with this bot, and the permission lets its holder list a channel's
-     webhooks. That listing returns the webhook token, which is the URL
-     `discord-plugin-install.md` says is never written anywhere.
+     webhooks. That listing returns the webhook token. A webhook URL carries
+     its own token, so it is a credential, and it belongs in no file in this
+     repository. `scripts/tests/test_public_scrub.py` fails on one.
    - `VIEW_AUDIT_LOG` is absent because the pinned tool sets in step 4 do not
      use it.
 
@@ -121,9 +122,9 @@ the channel and role layout they post into.
    server's environment. Write one `export` in that file and every token in it
    reaches this process, silently.
 
-   Never write the token to a tracked file or to a Paperclip secret. Do not
-   pass a second `discord` server on the command line. A second entry of the
-   same name overrides this one.
+   Never write the token to a tracked file, and never copy it into a second
+   store. The env file is the only copy. Do not pass a second `discord` server
+   on the command line. A second entry of the same name overrides this one.
 
 5. **Check the tool list before you change anything.** Call the server's
    `tools/list` and read the result. Make sure it matches the README: channel

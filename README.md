@@ -22,11 +22,9 @@ workbench/
   adapters/            one thin adapter per harness: a manifest, a README, and nothing else
   wiki/                the one pack this template ships: the five wiki skills and their manifests
   scripts/             the checks and the generator, with their tests
-  prompts/             setup.md, setup-paperclip.md, and prompts you paste in on purpose
-  paperclip/           the orchestration layer's shape: the company, the org, the wake
-                       prompt, the agent and subagent specs. Placeholders until setup runs
+  prompts/             setup.md, and prompts you paste in on purpose
   docs/setup/          runbooks for the things outside this repo: the Discord comms
-                       layer, the plugin, and phone access
+                       layer and phone access
   central-context/     the knowledge base
     raw/               sources, immutable, written by a person
     wiki/              pages compiled from raw/, written by the agent
@@ -194,12 +192,6 @@ plugin that loads hooks and skills into every session costs tokens in every
 session. Whatever you choose, measure the always-on cost of a plugin before you
 enable it everywhere; `claude plugin details <name>` reports it on one harness,
 and the other harnesses' adapters say what to run there.
-
-## An agent company on top, if you want one
-
-`prompts/setup-paperclip.md` turns a set-up workbench into a Paperclip company. Paperclip is an open-source server that runs agents as a company. The prompt builds a small team: one agent that scopes each ticket, and one lead per kind of work, each running your packs' roles inside one run. You are the board. No work starts until you approve its scope, and agents file anything outside the scope as a backlog issue that wakes nobody.
-
-The prompt writes `paperclip/`, the source of truth for the team. `scripts/paperclip-apply.py` makes the server match it, and `scripts/paperclip-watchdog.py` pauses an agent at a daily run cap. Paste the prompt after `setup.md` is done. Nothing in this tree uses Paperclip until you do.
 
 ## Requirements
 

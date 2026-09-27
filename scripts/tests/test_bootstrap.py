@@ -6,7 +6,7 @@ FakeRunner answers each command from a table and records every call.
 Every value particular to one practice lives in `bootstrap.settings.json`, so
 most tests here build a settings dict of their own and hand it to the context.
 The shipped file is checked separately: every value in it is a placeholder, an
-empty list, a loopback address, false, or a fixed argument list.
+empty list, or a fixed argument list, and every key in it is read by a step.
 """
 
 import contextlib
@@ -30,11 +30,10 @@ _spec.loader.exec_module(bs)
 class FakeRunner:
     """`answers` maps a command's first words to (returncode, stdout)."""
 
-    def __init__(self, answers, which=(), files=(), http=None):
+    def __init__(self, answers, which=(), files=()):
         self.answers = answers
         self.which_set = set(which)
         self.files = set(files)
-        self.http = http
         self.calls = []
 
     def run(self, cmd, cwd=None):
@@ -51,17 +50,11 @@ class FakeRunner:
     def exists(self, path):
         return str(path) in self.files
 
-    def get_json(self, url):
-        if self.http is None:
-            raise OSError("connection refused")
-        return self.http.get(url)
-
 
 # A fully configured settings tree. No value here belongs to any practice; the
 # names are invented for the tests.
 CONFIGURED = {
     "workbench_path_in_templates": "/original/workbench",
-    "launchd_label_prefix": "org.example.workbench",
     "brew_packages": ["tool-a", "tool-b"],
     "node_min": "24.11.0",
     "agent_cli": {
@@ -85,7 +78,6 @@ CONFIGURED = {
                        "template": "scripts/org.example.refresh.plist.template"}],
     "review_webhook": {"path": "~/.config/reviews/webhook",
                        "how": ["Open the chat app and copy the webhook URL"]},
-    "paperclip": {"enabled": True, "api": "http://127.0.0.1:3100", "version": "2026.916.1"},
 }
 
 HEALTHY = {
@@ -96,7 +88,6 @@ HEALTHY = {
     "git config --get core.hooksPath": (0, ".githooks\n"),
     "brew list --versions tool-a tool-b": (0, "tool-a 2\ntool-b 1\n"),
     "agentcli plugin list": (0, "pack-one@market-one\n"),
-    "paperclipai --version": (0, "2026.916.1\n"),
     "launchctl list": (0, "-\t0\torg.example.refresh\n"),
     "pmset -g": (0, " sleep                0\n"),
 }
@@ -130,6 +121,16 @@ class VersionTests(unittest.TestCase):
 
 
 class PlanTests(unittest.TestCase):
+    # Every step this script runs, in order. Pinned here because a step that
+    # depends on software this template does not ship would leave a reader with
+    # a report they cannot act on.
+    EXPECTED = ["xcode-clt", "homebrew", "brew-packages", "node", "agent-cli", "gh-auth",
+                "git-hooks", "repos", "packs", "cli-tools", "launch-agents",
+                "review-webhook", "always-on"]
+
+    def test_the_step_list_is_exactly_the_documented_one(self):
+        self.assertEqual([s.id for s in bs.STEPS], self.EXPECTED)
+
     def test_every_step_has_an_id_a_title_and_a_way_forward(self):
         ids = [s.id for s in bs.STEPS]
         self.assertEqual(len(ids), len(set(ids)))
@@ -241,7 +242,6 @@ class SettingsTests(unittest.TestCase):
         found = set(bs.placeholder_keys(data))
         expected = {
             "workbench_path_in_templates",
-            "launchd_label_prefix",
             "brew_packages[0]",
             "node_min",
             "agent_cli.command",
@@ -258,29 +258,33 @@ class SettingsTests(unittest.TestCase):
             "launch_agents[0].template",
             "review_webhook.path",
             "review_webhook.how[0]",
-            "paperclip.version",
         }
         self.assertEqual(found, expected)
 
     def test_the_shipped_file_has_every_key_the_documented_schema_names(self):
         data = json.loads((ROOT / "bootstrap.settings.json").read_text())
         self.assertEqual(set(data), {
-            "workbench_path_in_templates", "launchd_label_prefix", "brew_packages", "node_min", "agent_cli",
-            "packs", "repos", "cli_tools", "launch_agents", "review_webhook", "paperclip"})
+            "workbench_path_in_templates", "brew_packages", "node_min", "agent_cli",
+            "packs", "repos", "cli_tools", "launch_agents", "review_webhook"})
         self.assertEqual(set(data["agent_cli"]),
                          {"command", "min_version", "version_args", "update_args", "sign_in_note"})
         self.assertEqual(set(data["packs"]), {"list_args", "marketplace_add_args", "install_args",
                                               "marketplaces", "install"})
         self.assertEqual(set(data["review_webhook"]), {"path", "how"})
-        self.assertEqual(set(data["paperclip"]), {"enabled", "api", "version"})
-        self.assertFalse(data["paperclip"]["enabled"])
-        self.assertEqual(data["paperclip"]["api"], "http://127.0.0.1:3100")
+
+    def test_every_key_in_the_shipped_file_is_read_by_a_step(self):
+        """A settings key nothing reads is a question the reader answers for
+        nothing. Each key below names the step that reads it."""
+        data = json.loads((ROOT / "bootstrap.settings.json").read_text())
+        source = (SCRIPTS / "bootstrap.py").read_text()
+        for key in data:
+            with self.subTest(key=key):
+                self.assertIn(key, source, f"{key} is in the settings file and nothing reads it")
 
     def test_the_shipped_file_leaves_every_step_skipped_and_never_raises(self):
         data = json.loads((ROOT / "bootstrap.settings.json").read_text())
         config = bs.Settings(data)
         driven = {"brew-packages", "node", "agent-cli", "repos", "packs", "cli-tools",
-                  "paperclip-cli", "paperclip-server", "paperclip-company", "watchdog",
                   "launch-agents", "review-webhook"}
         with tempfile.TemporaryDirectory() as tmp:
             results = bs.run_steps(ctx(tmp, FakeRunner({}), config=config), only=driven)
@@ -456,27 +460,6 @@ class LaunchAgentTests(unittest.TestCase):
             with self.assertRaises(bs.BootstrapError, msg=bad):
                 bs.check_label(bad)
 
-    def test_a_label_prefix_from_settings_is_checked_too(self):
-        """The prefix is half the watchdog label, and it comes from settings, so
-        it reaches the same path join."""
-        with tempfile.TemporaryDirectory() as tmp:
-            self.repo_for_watchdog(tmp)
-            config = settings({"launchd_label_prefix": "../../../../tmp/escaped"})
-            runner = FakeRunner({**HEALTHY, "launchctl list": (0, "")},
-                                http={"http://127.0.0.1:3100/api/companies": [{"id": "new"}]})
-            [result] = bs.run_steps(ctx(tmp, runner, config=config), only={"watchdog"})
-        self.assertEqual(result.status, "failed")
-        self.assertIn("launchd label", result.detail)
-
-    def repo_for_watchdog(self, tmp):
-        root = Path(tmp)
-        (root / "paperclip" / "orgs").mkdir(parents=True)
-        (root / "paperclip" / "company.json").write_text(
-            json.dumps({"companyId": "base", "apiBase": "http://x", "agents": []}))
-        (root / "paperclip" / "orgs" / "second.json").write_text(
-            json.dumps({"extends": "../company.json", "companyId": "new"}))
-        return root
-
     def test_a_written_launch_agent_is_readable_only_by_its_owner(self):
         """No credential is in the template today. Mode 600 is set before one
         is, because a plist under `~/Library/LaunchAgents` is a plausible place
@@ -518,130 +501,6 @@ class ReviewWebhookTests(unittest.TestCase):
             [result] = bs.run_steps(ctx(tmp, FakeRunner(HEALTHY), config=config), only={"review-webhook"})
         self.assertEqual(result.status, "skipped")
         self.assertIn("review_webhook.path", result.detail)
-
-
-class PaperclipTests(unittest.TestCase):
-    def repo(self, tmp):
-        root = Path(tmp)
-        (root / "paperclip" / "orgs").mkdir(parents=True)
-        (root / "paperclip" / "company.json").write_text(json.dumps({"companyId": "base", "apiBase": "http://x",
-                                                                    "agents": []}))
-        (root / "paperclip" / "orgs" / "second.json").write_text(json.dumps({"extends": "../company.json",
-                                                                            "companyId": "new"}))
-        return root
-
-    def test_every_paperclip_step_is_skipped_when_it_is_disabled(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.repo(tmp)
-            config = settings({"paperclip": {"enabled": False}})
-            results = bs.run_steps(ctx(tmp, FakeRunner(HEALTHY), config=config),
-                                   only={"paperclip-cli", "paperclip-server", "paperclip-company", "watchdog"})
-        self.assertEqual([r.status for r in results], ["skipped"] * 4)
-        self.assertIn("paperclip.enabled", results[0].detail)
-
-    def test_live_configs_are_the_ones_whose_company_exists(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.repo(tmp)
-            runner = FakeRunner(HEALTHY, http={"http://127.0.0.1:3100/api/companies": [{"id": "new"}]})
-            live = bs.live_configs(ctx(tmp, runner))
-        self.assertEqual([p.name for p in live], ["second.json"])
-
-    def test_no_live_company_is_a_manual_step(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.repo(tmp)
-            runner = FakeRunner(HEALTHY, http={"http://127.0.0.1:3100/api/companies": []})
-            [result] = bs.run_steps(ctx(tmp, runner), only={"paperclip-company"})
-        self.assertEqual(result.status, "manual")
-        self.assertTrue(result.commands)
-
-    def test_a_missing_paperclip_directory_is_skipped_not_a_traceback(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            runner = FakeRunner(HEALTHY, http={"http://127.0.0.1:3100/api/companies": []})
-            results = bs.run_steps(ctx(tmp, runner), only={"paperclip-company", "watchdog"})
-        self.assertEqual([r.status for r in results], ["skipped", "skipped"])
-        for result in results:
-            self.assertIn("paperclip/", result.detail)
-            self.assertNotIn("raised", result.detail)
-
-    def watchdog(self, tmp, config=None, loaded="something.else"):
-        self.repo(tmp)
-        runner = FakeRunner({**HEALTHY, "launchctl list": (0, f"-\t0\t{loaded}\n")},
-                            http={"http://127.0.0.1:3100/api/companies": [{"id": "new"}]})
-        [result] = bs.run_steps(ctx(tmp, runner, config=config), only={"watchdog"})
-        return result
-
-    def test_a_missing_watchdog_is_written_per_live_company_with_the_settings_prefix(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.watchdog(tmp)
-        self.assertEqual(result.status, "fixable")
-        label = "org.example.workbench.paperclip-watchdog.second"
-        self.assertIn(label, result.detail)
-        self.assertTrue(any(c.startswith("write ") and c.endswith(f"{label}.plist") for c in result.commands))
-        self.assertTrue(any("launchctl bootstrap" in c for c in result.commands))
-
-    def test_a_loaded_watchdog_reports_ok(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.watchdog(tmp, loaded="org.example.workbench.paperclip-watchdog.second")
-        self.assertEqual(result.status, "ok")
-
-    def test_an_unconfigured_label_prefix_leaves_the_watchdog_skipped(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.watchdog(tmp, config=settings({"launchd_label_prefix": "<reverse.dns.prefix>"}))
-        self.assertEqual(result.status, "skipped")
-        self.assertIn("launchd_label_prefix", result.detail)
-        self.assertNotIn("raised", result.detail)
-
-    def test_no_live_company_leaves_the_watchdog_skipped(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.repo(tmp)
-            runner = FakeRunner(HEALTHY, http={"http://127.0.0.1:3100/api/companies": []})
-            [result] = bs.run_steps(ctx(tmp, runner), only={"watchdog"})
-        self.assertEqual(result.status, "skipped")
-        self.assertIn("live", result.detail)
-        self.assertNotIn("raised", result.detail)
-
-    def test_the_written_plist_carries_this_checkout_and_the_config_path(self):
-        org = bs._module("paperclip_new_org", bs.NEW_ORG)
-        with tempfile.TemporaryDirectory() as tmp:
-            config = Path(tmp) / "paperclip" / "orgs" / "second.json"
-            text = org.watchdog_plist(config, repo=Path(tmp), prefix="org.example.workbench")
-        self.assertIn(f"{tmp}/scripts/paperclip-watchdog.py", text)
-        self.assertIn(str(config), text)
-        self.assertIn("<string>org.example.workbench.paperclip-watchdog.second</string>", text)
-
-    def test_the_server_answering_reports_ok_at_the_configured_api(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            runner = FakeRunner(HEALTHY, http={"http://127.0.0.1:3100/api/companies": []})
-            [result] = bs.run_steps(ctx(tmp, runner), only={"paperclip-server"})
-        self.assertEqual(result.status, "ok")
-        self.assertIn("http://127.0.0.1:3100", result.detail)
-
-    def test_the_server_down_is_manual(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            [result] = bs.run_steps(ctx(tmp, FakeRunner(HEALTHY)), only={"paperclip-server"})
-        self.assertEqual(result.status, "manual")
-        self.assertTrue(any("paperclipai" in c for c in result.commands))
-
-
-class UrlTests(unittest.TestCase):
-    """`paperclip.api` comes from settings, and `urlopen` honours `file://` and
-    `ftp://`. The scheme is checked before anything is opened."""
-
-    def test_http_and_https_pass(self):
-        self.assertEqual(bs.http_url("http://127.0.0.1:3100/api"), "http://127.0.0.1:3100/api")
-        self.assertEqual(bs.http_url("https://example.invalid/api"), "https://example.invalid/api")
-
-    def test_every_other_scheme_is_refused_by_name(self):
-        for bad in ("file:///etc/passwd", "ftp://example.invalid/x", "data:text/plain,x", "/etc/passwd"):
-            with self.assertRaises(bs.BootstrapError, msg=bad):
-                bs.http_url(bad)
-
-    def test_the_runner_refuses_a_file_url_without_opening_it(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "companies.json"
-            target.write_text('[{"id": "smuggled"}]')
-            with self.assertRaises(bs.BootstrapError):
-                bs.Runner().get_json(f"file://{target}")
 
 
 class ApprovalTests(unittest.TestCase):

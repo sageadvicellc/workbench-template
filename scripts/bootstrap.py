@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import collections
-import importlib.util
 import json
 import os
 import re
@@ -39,8 +38,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import urllib.parse
-import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -48,12 +45,6 @@ SCRIPTS = Path(__file__).resolve().parent
 REPO = SCRIPTS.parent
 SETTINGS_NAME = "bootstrap.settings.json"
 SETTINGS_FILE = REPO / SETTINGS_NAME
-API = "http://127.0.0.1:3100"
-NEW_ORG = "paperclip-new-org.py"
-# The reverse-DNS prefix every launchd label here is built from. A prefix names
-# a practice, so it is a setting; an unset or placeholder value leaves the
-# watchdog step `skipped` rather than writing a label built from a placeholder.
-LABEL_PREFIX = "launchd_label_prefix"
 PLACEHOLDER = re.compile(r"<[^<>]*>")
 PASSING = ("ok", "fixed", "skipped")
 # A launchd label is joined into a file path, so it may hold only the characters
@@ -77,20 +68,6 @@ def check_label(label):
             f"launchd label {text!r} is not a label: only letters, digits, a dot, an underscore, "
             "and a hyphen are allowed, because the label becomes a file name under "
             "~/Library/LaunchAgents")
-    return text
-
-
-def http_url(url):
-    """A URL this script may fetch, or a raise naming the scheme it refused.
-
-    `urlopen` honours `file://` and `ftp://`, and `paperclip.api` is a settings
-    value, so the scheme is checked before anything is opened.
-    """
-    text = str(url)
-    scheme = urllib.parse.urlparse(text).scheme
-    if scheme not in ("http", "https"):
-        raise BootstrapError(f"refusing to fetch {text}: only http and https are allowed, not "
-                             f"{scheme or 'a URL with no scheme'}")
     return text
 
 
@@ -191,10 +168,6 @@ class Runner:
     def exists(self, path):
         return Path(path).exists()
 
-    def get_json(self, url):
-        with urllib.request.urlopen(http_url(url), timeout=5) as resp:
-            return json.loads(resp.read())
-
 
 @dataclass
 class Context:
@@ -206,10 +179,6 @@ class Context:
     assume_yes: bool = False          # skip the settings-commands prompt
     ask: object = None                # how to read the answer; `input` by default
     approval: bool | None = None      # the answer, once, for the whole run
-
-    @property
-    def api(self):
-        return self.settings.get("paperclip.api", API) or API
 
 
 @dataclass
@@ -292,46 +261,10 @@ def render_template(path, repo, original):
     return Path(path).read_text().replace(str(original), str(repo))
 
 
-def _module(name, file):
-    """A sibling script by path; a hyphenated filename cannot be imported by name."""
-    if name in sys.modules:
-        return sys.modules[name]
-    if str(SCRIPTS) not in sys.path:
-        sys.path.insert(0, str(SCRIPTS))
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / file)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
 def _launch_agent(ctx, label, text):
     plist = ctx.home / "Library" / "LaunchAgents" / f"{check_label(label)}.plist"
     return [Write(plist, text, mode=PLIST_MODE),
             Cmd(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)])]
-
-
-def live_configs(ctx):
-    """The configs, `company.json` and each overlay, whose company is live."""
-    load_config = _module("paperclip_lib", "paperclip_lib.py").load_config
-    ids = {c.get("id") for c in (ctx.runner.get_json(f"{ctx.api}/api/companies") or [])}
-    configs = [ctx.repo / "paperclip" / "company.json"] + sorted((ctx.repo / "paperclip" / "orgs").glob("*.json"))
-    return [p for p in configs if p.exists() and load_config(p).get("companyId") in ids]
-
-
-def _paperclip_off(ctx):
-    """Why the Paperclip steps do not apply here, or None."""
-    if ctx.settings.error:
-        return ctx.settings.error
-    if not ctx.settings.get("paperclip.enabled"):
-        return f"paperclip.enabled is false in {SETTINGS_NAME}"
-    return None
-
-
-def _no_paperclip_dir(ctx):
-    if not (ctx.repo / "paperclip").is_dir():
-        return "paperclip/ does not exist in this workbench, so there is no company to run"
-    return None
 
 
 # --- the steps ----------------------------------------------------------------
@@ -446,71 +379,6 @@ def check_cli_tools(ctx):
                    fix=fix)
 
 
-def check_paperclip_cli(ctx):
-    reason = _paperclip_off(ctx) or ctx.settings.unconfigured("paperclip.version")
-    if reason:
-        return skipped(reason)
-    want = str(ctx.settings.get("paperclip.version"))
-    rc, out = ctx.runner.run(["paperclipai", "--version"])
-    if rc == 0:
-        detail = out.strip() if want in out else f"{out.strip()}; this workbench was tested on {want}"
-        return Outcome(True, detail)
-    return Outcome(False, "paperclipai missing", fix=[Cmd(["npm", "install", "-g", f"paperclipai@{want}"])])
-
-
-def check_paperclip_server(ctx):
-    reason = _paperclip_off(ctx)
-    if reason:
-        return skipped(reason)
-    try:
-        ctx.runner.get_json(f"{ctx.api}/api/companies")
-        return Outcome(True, f"answering at {ctx.api}")
-    except (OSError, ValueError):
-        return Outcome(False, f"no server at {ctx.api}. Onboarding asks questions: pick loopback, or "
-                              "a private network to reach it from a phone", manual=[
-                                  "paperclipai onboard", "paperclipai service install",
-                                  "paperclipai service status"])
-
-
-def check_paperclip_company(ctx):
-    reason = _paperclip_off(ctx) or _no_paperclip_dir(ctx)
-    if reason:
-        return skipped(reason)
-    live = live_configs(ctx)
-    if live:
-        return Outcome(True, "live: " + ", ".join(str(p.relative_to(ctx.repo)) for p in live))
-    return Outcome(False, "no company in paperclip/ is live on this server", manual=[
-        "cp paperclip/company.json paperclip/orgs/<machine>.json",
-        "In the copy, set companyId to null, set company.name, and delete each agentOverrides id",
-        f"python3 scripts/{NEW_ORG} paperclip/orgs/<machine>.json --apply",
-        "Commit paperclip/orgs/<machine>.json on a branch and open a pull request"])
-
-
-def check_watchdog(ctx):
-    reason = (_paperclip_off(ctx) or _no_paperclip_dir(ctx)
-              or ctx.settings.unconfigured(LABEL_PREFIX))
-    if reason:
-        return skipped(reason)
-    sibling = SCRIPTS / NEW_ORG
-    if not sibling.exists():
-        return skipped(f"scripts/{NEW_ORG} does not exist yet, and it names and writes each watchdog agent")
-    live = live_configs(ctx)
-    if not live:
-        return skipped("no company in paperclip/ is live on this server, so there is no watchdog to load")
-    org = _module("paperclip_new_org", NEW_ORG)
-    prefix = str(ctx.settings.get(LABEL_PREFIX))
-    _, loaded = ctx.runner.run(["launchctl", "list"])
-    fix, missing = [], []
-    for config in live:
-        label = org.watchdog_label(config, prefix=prefix)
-        if label in loaded:
-            continue
-        missing.append(label)
-        fix += _launch_agent(ctx, label, org.watchdog_plist(config, repo=ctx.repo, prefix=prefix))
-    return Outcome(not missing, f"missing {', '.join(missing)}" if missing else "a watchdog runs for each live company",
-                   fix=fix)
-
-
 def check_launch_agents(ctx):
     reason = ctx.settings.first_unconfigured("launch_agents", "workbench_path_in_templates")
     if reason:
@@ -560,11 +428,6 @@ STEPS = [
     Step("repos", "The repositories in settings", check_repos, ("gh-auth",)),
     Step("packs", "The packs in settings", check_packs, ("agent-cli",)),
     Step("cli-tools", "The command-line tools in settings", check_cli_tools, ("node",)),
-    Step("paperclip-cli", "The Paperclip CLI", check_paperclip_cli, ("node",)),
-    Step("paperclip-server", "Paperclip server", check_paperclip_server, ("paperclip-cli",)),
-    Step("paperclip-company", "A Paperclip company from paperclip/", check_paperclip_company,
-         ("paperclip-server",)),
-    Step("watchdog", "A Paperclip watchdog per company", check_watchdog, ("paperclip-company",)),
     Step("launch-agents", "The launchd agents in settings", check_launch_agents),
     Step("review-webhook", "The review chat webhook", check_review_webhook),
     Step("always-on", "No system sleep on power", check_always_on),
