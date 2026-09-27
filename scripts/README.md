@@ -22,6 +22,8 @@ project's repo. Everything else is here.
 
 | Script | Does | Run from |
 |---|---|---|
+| `bootstrap.py` | Sets this workbench up on a new Mac, or checks one. One step per thing to check; fixes what it safely can and prints the commands for the rest | The workbench root, through its entry point: `./bootstrap.sh`, or `./bootstrap.sh --check` to change nothing |
+| `bootstrap.settings.json` | Data, not a script. Every value particular to one practice that `bootstrap.py` needs: paths, package lists, version minimums, repositories, packs, launchd agents. Tracked, at the workbench root | Read by `bootstrap.py` |
 | `check-skills.py` | Checks skill frontmatter under `wiki/skills/` | The workbench root: `python3 scripts/check-skills.py` |
 | `check-open-items.py` | Checks the `open_items` frontmatter of the context files | The workbench root: `python3 scripts/check-open-items.py` |
 | `open-items-files.txt` | Data, not a script. The context files `check-open-items.py` reads by default | Read by `check-open-items.py` |
@@ -30,6 +32,87 @@ project's repo. Everything else is here.
 | `paperclip-apply.py` | Makes a live Paperclip company match `paperclip/company.json`, the wake prompt, and each agent's `AGENTS.md`. Prints a plan and changes nothing without `--apply`. Unused until `prompts/setup-paperclip.md` runs | The workbench root: `python3 scripts/paperclip-apply.py` |
 | `paperclip-watchdog.py` | Pauses a Paperclip agent at its daily run cap or after a burst of login failures, and parks issues no person or routine created. Calls no model | The workbench root: `python3 scripts/paperclip-watchdog.py --dry-run` |
 | `paperclip_lib.py` | The config loader and HTTP client the two Paperclip scripts share | Imported, not run |
+
+## bootstrap.py
+
+A new machine needs a dozen things installed, signed into, and switched on
+before any work runs here. This is the one command that says which of them are
+done. `./bootstrap.sh` is the entry point: it proves the Xcode Command Line
+Tools are there, because Python arrives with them, then runs this script on
+`/usr/bin/python3`. The script itself imports nothing outside the standard
+library, so it runs on a Mac nobody has set up yet.
+
+Each step checks one thing and returns one status. A step this script can fix
+safely, such as a `git config` or an install command, it fixes and rechecks. A
+step that needs a person, such as a sign-in or an interactive installer, prints
+the exact commands and waits for the next run. Every step is safe to run twice.
+A step whose prerequisite did not pass is `blocked` and is not judged.
+
+    ./bootstrap.sh              # check each step and fix what it can
+    ./bootstrap.sh --check      # check only; change nothing
+    ./bootstrap.sh --json       # the same report as JSON, for an agent
+    ./bootstrap.sh --only node,repos
+
+The seven statuses are `ok`, `fixed`, `fixable`, `manual`, `blocked`, `failed`,
+and `skipped`. The exit code is 1 when any step is `manual`, `fixable`,
+`failed`, or `blocked`, and 0 otherwise.
+
+The steps, in order, and what each one checks:
+
+| Step | Checks |
+|---|---|
+| `xcode-clt` | `xcode-select -p` answers, so the Command Line Tools are installed |
+| `homebrew` | `brew` is on the PATH |
+| `brew-packages` | every package in `brew_packages` is installed |
+| `node` | `node --version` is at least `node_min` |
+| `agent-cli` | the command in `agent_cli.command` answers, and its version is at least `agent_cli.min_version` |
+| `gh-auth` | `gh auth status` reports a sign-in |
+| `git-hooks` | this clone's `core.hooksPath` is `.githooks`, which cloning does not carry |
+| `repos` | every directory in `repos` exists, and clones the ones that do not |
+| `packs` | every entry in `packs.install` appears in the pack list, and adds each marketplace first |
+| `cli-tools` | every `cli_tools` entry's `name` is on the PATH |
+| `paperclip-cli` | `paperclipai` answers, at the version in `paperclip.version` |
+| `paperclip-server` | `paperclip.api` answers on loopback |
+| `paperclip-company` | one config under `paperclip/` names a company the server knows |
+| `watchdog` | a launchd watchdog is loaded for each live company |
+| `launch-agents` | every `launch_agents` label is loaded, writing its plist template with this checkout's path in place of `workbench_path_in_templates` |
+| `review-webhook` | the file at `review_webhook.path` exists. It never prints the URL |
+| `always-on` | `pmset -g` reports `sleep 0`, because a Mac that sleeps stops every agent run |
+
+### What `skipped` means
+
+`skipped` is the status for a step this workbench has not configured yet. A
+setting that still holds an angle-bracket placeholder, such as `<x.y.z>`, or a
+list that is empty, makes its step `skipped`, and the detail names the settings
+key to fill in. A `skipped` step judges nothing: it blocks no step that needs
+it, and it never makes the exit code non-zero on its own. The three Paperclip
+steps and the watchdog are `skipped` whenever `paperclip.enabled` is false. A
+step whose plist template, sibling script, or `paperclip/` directory is absent
+is `skipped` too, with the path in the detail, rather than raising.
+
+The text report ends with one line naming every settings key still holding a
+placeholder, so a single run tells a person everything left to fill in. The
+JSON report carries the same list under `placeholders`, beside a `summary` count
+per status.
+
+### bootstrap.settings.json
+
+`bootstrap.settings.json`, at the workbench root, is the only place a value
+particular to one practice belongs. Paths, package lists, version minimums,
+repository remotes, pack names, marketplace names, launchd labels, and the
+webhook path all live there. None of them belongs in `bootstrap.py`, which is
+why the script names no harness, no repository, and no absolute home path: the
+command it runs and the arguments it passes come from the file.
+
+Two conventions bind the file. `{name}` inside a `packs` argument list is
+substituted with the marketplace or pack name being added or installed. A
+`repos` entry's `path` is relative to the workbench root unless it starts with
+`~`, which resolves under the home directory, or `/`, which is taken as is. The
+same rule applies to `review_webhook.path` and to each `launch_agents`
+`template`.
+
+The file ships fully unconfigured, so a fresh clone reports every configurable
+step as `skipped` and nothing else. Fill it in during setup.
 
 ## check-skills.py
 

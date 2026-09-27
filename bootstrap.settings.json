@@ -1,0 +1,27 @@
+{
+  "workbench_path_in_templates": "<absolute path of this workbench>",
+  "brew_packages": ["<package>"],
+  "node_min": "<x.y.z>",
+  "agent_cli": {
+    "command": "<the harness command; adapters/harness-names.txt lists the ones this template knows>",
+    "min_version": "<x.y.z>",
+    "version_args": ["--version"],
+    "update_args": ["update"],
+    "sign_in_note": "<what a person does once to sign in>"
+  },
+  "packs": {
+    "list_args": ["plugin", "list"],
+    "marketplace_add_args": ["plugin", "marketplace", "add", "{name}"],
+    "install_args": ["plugin", "install", "{name}"],
+    "marketplaces": ["<owner>/<marketplace>"],
+    "install": ["<pack>@<marketplace>"]
+  },
+  "repos": [{ "path": "<directory>/<repo>", "remote": "<owner>/<repo>" }],
+  "cli_tools": [{ "name": "<command>", "install": ["<installer>", "<args>"], "after": [] }],
+  "launch_agents": [{ "label": "<reverse.dns.label>", "template": "scripts/<label>.plist.template" }],
+  "review_webhook": {
+    "path": "<absolute path of the file that holds one webhook URL>",
+    "how": ["<what a person does to get the URL>"]
+  },
+  "paperclip": { "enabled": false, "api": "http://127.0.0.1:3100", "version": "<x.y.z>" }
+}
